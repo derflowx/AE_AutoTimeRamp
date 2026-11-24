@@ -61,6 +61,11 @@ In and out have separate presets with a link checkbox.
 
 ## Technical risks (prototype first)
 
+Status 2026-11-24 (v0.1, AE 26.5): risks 1–3 verified. Frames beyond the trim render correctly;
+no errors with Multi-Frame Rendering on; trimming re-renders correctly. The automated self-test
+matches RampMath to within 0.001 frames at 32 bpc. Risk 4 is still open.
+
+
 1. Can the effect check out its own layer at times outside the layer's in/out (handles)?
 2. Reading layer in/out + markers safely under Multi-Frame Rendering. (Likely fine: the SDK's
    SmartyPants sample calls AEGP layer suites in PreRender with threaded rendering enabled.)

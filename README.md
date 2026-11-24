@@ -58,7 +58,22 @@ The effect appears under **Effect > Time > Auto Time Ramp**.
 
 Real-time length = layer length − ramp in − ramp out. If the ramps don't fit, both shrink proportionally.
 
-## Spike test checklist
+## Automated AE self-test
+
+With After Effects 2026 running on an **empty project** (Preferences > Scripting & Expressions >
+*Allow Scripts to Write Files and Access Network* enabled):
+
+```powershell
+.\build.ps1 -AETest
+```
+
+[tests/ae/selftest.jsx](tests/ae/selftest.jsx) builds a throwaway precomp whose red channel encodes its
+own time, applies Auto Time Ramp, and reads the post-effect pixel back on every frame with
+`sampleImage()`. [tests/ae/compare_selftest.cpp](tests/ae/compare_selftest.cpp) then checks every frame
+against `RampMath`. It covers sync/head/tail anchors, in/out trims, Settle/Circ/Expo/Whip eases,
+source clamping, and 32/16/8 bpc. All test items are removed afterwards; the project is not saved.
+
+## Manual test checklist
 
 Use a precomp that shows its own time, e.g. a 60 s comp with a solid + the **Timecode** effect, placed
 in a main comp and trimmed to 7 s with plenty of handle on both sides. Apply Auto Time Ramp with the

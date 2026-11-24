@@ -2,8 +2,12 @@
 #   .\build.ps1            -> build the effect (Release|x64)
 #   .\build.ps1 -Tests     -> build and run the RampMath unit tests
 #   .\build.ps1 -Config Debug
+#   .\build.ps1 -AETest    -> run tests\ae\selftest.jsx in the running AE 2026 and compare with RampMath
+#                             (use an empty project; needs "Allow Scripts to Write Files" enabled)
 param(
     [switch]$Tests,
+    [switch]$AETest,
+    [string]$AfterFX = 'C:\Program Files\Adobe\Adobe After Effects 2026\Support Files\AfterFX.exe',
     [ValidateSet('Release', 'Debug')][string]$Config = 'Release'
 )
 $ErrorActionPreference = 'Stop'
@@ -34,6 +38,26 @@ if ($Tests) {
     Invoke-InVsEnv "cl /nologo /std:c++17 /EHsc /W4 /WX /O2 `"$root\tests\test_rampmath.cpp`" `"$root\src\core\RampMath.cpp`" /Fo`"$out\\`" /Fe`"$out\test_rampmath.exe`""
     & "$out\test_rampmath.exe"
     if ($LASTEXITCODE -ne 0) { throw 'Tests failed.' }
+    return
+}
+
+if ($AETest) {
+    $out = Join-Path $root 'build\tests'
+    New-Item -ItemType Directory -Force $out | Out-Null
+    Invoke-InVsEnv "cl /nologo /std:c++17 /EHsc /W4 /O2 `"$root\tests\ae\compare_selftest.cpp`" `"$root\src\core\RampMath.cpp`" /Fo`"$out\\`" /Fe`"$out\compare_selftest.exe`" >nul"
+    # AfterFX -r silently ignores script paths containing spaces, so run from a temp folder.
+    $tmp = Join-Path $env:TEMP 'atr_aetest'
+    New-Item -ItemType Directory -Force $tmp | Out-Null
+    Copy-Item "$root\tests\ae\selftest.jsx" $tmp -Force
+    $csv = Join-Path $tmp 'selftest_result.csv'
+    Remove-Item $csv -ErrorAction SilentlyContinue
+    & $AfterFX -r (Join-Path $tmp 'selftest.jsx')
+    $deadline = (Get-Date).AddMinutes(5)
+    while (-not (Test-Path $csv) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 500 }
+    if (-not (Test-Path $csv)) { throw 'No result from After Effects (is it running, with file access allowed for scripts?)' }
+    Start-Sleep -Milliseconds 500
+    & "$out\compare_selftest.exe" $csv
+    if ($LASTEXITCODE -ne 0) { throw 'AE self-test failed.' }
     return
 }
 
