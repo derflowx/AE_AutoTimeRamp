@@ -4,9 +4,9 @@ After Effects effect (native C++, AE SDK) that speed-ramps a layer into and out 
 in/out points. No Time Remap, no keyframes: everything is derived from the layer's trimmed length.
 Design: [docs/DESIGN.md](docs/DESIGN.md).
 
-Status: **v0.4**: ramps, ease presets incl. Custom bezier, linked ramp out, anchors, speed-based
-motion blur, ramp-linked transform (scale/rotation/position/opacity) with mirror edges, a speed
-graph in Effect Controls, and a real-time marker on the layer.
+Status: **v0.5**: ramps, ease presets incl. Custom bezier, linked ramp out, anchors, speed-based
+motion blur, ramp-linked transform (scale/rotation/position/opacity) with mirror edges, a Speed/Time
+graph in Effect Controls, and a text-free real-time marker on the layer.
 
 ## Layout
 
@@ -49,9 +49,14 @@ The effect appears under **Effect > Time > Auto Time Ramp**.
 
 ## Effect controls
 
-![Speed graph in Effect Controls](docs/speed-graph.jpg)
+| Speed | Time |
+|---|---|
+| ![Speed graph](docs/speed-graph.jpg) | ![Time graph](docs/time-graph.jpg) |
 
-- **Speed graph**: speed over the layer's length on a log scale, with the ramp zones (orange),
+- **Graph**: switches the graph between **Speed** and **Time**.
+  - *Time* shows the source time at each moment of the layer (the curve a Time Remap graph would show),
+    with a dashed 1:1 line for untouched playback and the source time range labelled.
+  - *Speed* shows speed over the layer's length on a log scale, with the ramp zones (orange),
   real-time zone (green), 100% line and playhead. The header shows each ramp's duration, footage
   used and peak speed. The footer shows the real-time length and total footage used, or a red warning
   when a ramp runs off the clip or starts from a freeze.
@@ -90,8 +95,9 @@ The effect appears under **Effect > Time > Auto Time Ramp**.
   speed at 180°) the shutter covers less than one source frame, so a single sample is used and the
   image is untouched.
 
-- **Real-time marker** (on by default): a green duration marker on the layer, commented
-  "Real-time (Auto Time Ramp)", spanning the real-time zone. It follows param changes immediately (same
+- **Real-time marker** (on by default): a green duration marker on the layer, with no text, spanning
+  the real-time zone. It is recognised by a hidden marker parameter (`AutoTimeRamp=real-time`);
+  markers from v0.3/v0.4, which carried the comment "Real-time (Auto Time Ramp)", are rewritten without it. It follows param changes immediately (same
   undo step) and trims within about ¼ s (its own undo step, "Auto Time Ramp marker"). Undoing that step
   leaves the marker where it was; the next trim or param change syncs it again. Other markers are never
   touched. The marker is display only: dragging it doesn't change the ramps.
@@ -124,7 +130,8 @@ against `RampMath`. It covers sync/head/tail anchors, in/out trims, Settle/Circ/
 source clamping, Custom bezier, linked ramp out, motion blur (shutter angle and sample cap), and
 32/16/8 bpc. Ramp-transform cases view a horizontal gradient through scale/rotation/position/opacity
 with each edge mode and check every sampled point against the inverse transform. [tests/ae/marker_test.jsx](tests/ae/marker_test.jsx) then checks the real-time marker in
-stages: created on apply, updated on param change, followed after a trim, removed when switched off. The green channel is a
+stages: created on apply (with no text, upgrading an old text marker), updated on param change, followed
+after a trim, removed when switched off. The green channel is a
 sine of time, so averaging shows up in it: blur cases must match the predicted shutter average and
 visibly differ from an unblurred render. All test items are removed afterwards; the project is not saved.
 

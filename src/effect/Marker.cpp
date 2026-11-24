@@ -5,6 +5,7 @@
 #include <cstring>
 #include <cwchar>
 #include <map>
+#include <string>
 
 #ifdef AE_OS_WIN
     #include <Windows.h> // GetTickCount64
@@ -25,6 +26,7 @@ A_Time ToATime(double seconds)
 struct FoundMarker
 {
     bool exists = false;
+    bool legacy = false; // still carries the old visible comment: rewrite it
     AEGP_KeyframeIndex index = 0;
     double start = 0.0;
     double duration = 0.0;
@@ -51,25 +53,46 @@ A_Err FindOurMarker(AEGP_StreamRefH streamH, FoundMarker& found, double probeTim
         AEFX_CLR_STRUCT(val);
         if (kf->AEGP_GetNewKeyframeValue(g_pluginId, streamH, i, &val) != A_Err_NONE)
             continue;
-        bool ours = false;
-        AEGP_MemHandle memH = nullptr;
-        if (val.val.markerP &&
-            mk->AEGP_GetMarkerString(g_pluginId, val.val.markerP, AEGP_MarkerString_COMMENT, &memH) == A_Err_NONE &&
-            memH)
-        {
+        // UTF-16 string out of an AEGP mem handle (freed here).
+        auto take = [&](AEGP_MemHandle h) {
+            std::wstring out;
+            if (!h)
+                return out;
             void* p = nullptr;
-            if (mem->AEGP_LockMemHandle(memH, &p) == A_Err_NONE && p)
+            if (mem->AEGP_LockMemHandle(h, &p) == A_Err_NONE && p)
             {
-                ours = std::wcscmp(reinterpret_cast<const wchar_t*>(p), ATR_MARKER_COMMENT) == 0;
-                mem->AEGP_UnlockMemHandle(memH);
+                out = reinterpret_cast<const wchar_t*>(p);
+                mem->AEGP_UnlockMemHandle(h);
             }
-            mem->AEGP_FreeMemHandle(memH);
+            mem->AEGP_FreeMemHandle(h);
+            return out;
+        };
+        bool ours = false, legacy = false;
+        if (val.val.markerP)
+        {
+            AEGP_MemHandle commentH = nullptr;
+            if (mk->AEGP_GetMarkerString(g_pluginId, val.val.markerP, AEGP_MarkerString_COMMENT, &commentH) ==
+                A_Err_NONE)
+                legacy = take(commentH) == ATR_MARKER_LEGACY_COMMENT;
+            A_long params = 0;
+            mk->AEGP_CountCuePointParams(val.val.markerP, &params);
+            for (A_long k = 0; k < params && !ours; ++k)
+            {
+                AEGP_MemHandle keyH = nullptr, valueH = nullptr;
+                if (mk->AEGP_GetIndCuePointParam(g_pluginId, val.val.markerP, k, &keyH, &valueH) == A_Err_NONE)
+                {
+                    const std::wstring key = take(keyH), value = take(valueH);
+                    ours = key == ATR_MARKER_KEY && value == ATR_MARKER_VALUE;
+                }
+            }
+            ours = ours || legacy;
         }
         if (ours && !found.exists)
         {
             A_Time d = {0, 1};
             mk->AEGP_GetMarkerDuration(val.val.markerP, &d);
             found.exists = true;
+            found.legacy = legacy;
             found.index = i;
             found.start = ToSeconds(t);
             found.duration = ToSeconds(d);
@@ -168,7 +191,7 @@ void ProcessLayer(AEGP_LayerH layerH, AEGP_EffectRefH effH, A_long compId, doubl
         FoundMarker found;
         FindOurMarker(streamH, found);
         streams->AEGP_DisposeStream(streamH);
-        if (found.exists || !zone.want)
+        if ((found.exists && !found.legacy) || !zone.want)
             return;
     }
     else
@@ -286,7 +309,7 @@ bool SyncMarker(AEGP_LayerH layerH, const MarkerZone& zone, double frameSeconds,
         FindOurMarker(streamH, found, zone.start, &otherAtStart);
 
         const double tol = std::max(1.0e-4, 0.25 * frameSeconds);
-        const bool matches = found.exists && zone.want && std::fabs(found.start - zone.start) < tol &&
+        const bool matches = found.exists && !found.legacy && zone.want && std::fabs(found.start - zone.start) < tol &&
                              std::fabs(found.duration - zone.duration) < tol;
         const bool needed = zone.want ? !matches : found.exists;
 
@@ -305,11 +328,16 @@ bool SyncMarker(AEGP_LayerH layerH, const MarkerZone& zone, double frameSeconds,
                     AEGP_MarkerValP markerP = nullptr;
                     if (mk->AEGP_NewMarker(&markerP) == A_Err_NONE && markerP)
                     {
-                        const wchar_t* comment = ATR_MARKER_COMMENT;
-                        mk->AEGP_SetMarkerString(markerP,
-                                                 AEGP_MarkerString_COMMENT,
-                                                 reinterpret_cast<const A_u_short*>(comment),
-                                                 static_cast<A_long>(std::wcslen(comment)));
+                        // No visible text: identify the marker by a hidden parameter instead.
+                        const wchar_t* key = ATR_MARKER_KEY;
+                        const wchar_t* value = ATR_MARKER_VALUE;
+                        if (mk->AEGP_InsertCuePointParam(markerP, 0) == A_Err_NONE)
+                            mk->AEGP_SetIndCuePointParam(markerP,
+                                                         0,
+                                                         reinterpret_cast<const A_u_short*>(key),
+                                                         static_cast<A_long>(std::wcslen(key)),
+                                                         reinterpret_cast<const A_u_short*>(value),
+                                                         static_cast<A_long>(std::wcslen(value)));
                         mk->AEGP_SetMarkerDuration(markerP, &durT);
                         mk->AEGP_SetMarkerLabel(markerP, ATR_MARKER_LABEL);
                         AEGP_StreamValue2 v;

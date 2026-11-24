@@ -14,7 +14,7 @@
     var stage = stageFile.readln();
     stageFile.close();
 
-    var COMMENT = "Real-time (Auto Time Ramp)";
+    var LEGACY_COMMENT = "Real-time (Auto Time Ramp)"; // v0.3/v0.4 markers; must be migrated
     var FPS = 25;
     var lines = [];
     function check(name, ok, details) { lines.push((ok ? "PASS," : "FAIL,") + name + "," + details); }
@@ -32,14 +32,20 @@
         return L.property("ADBE Effect Parade").property("DFLW AutoTimeRamp")
             .property("DFLW AutoTimeRamp-" + id.substr(id.length - 4));
     }
-    // Our marker: [start (layer time), duration] or null.
+    // Our marker (hidden param AutoTimeRamp=real-time): [start (layer time), duration, comment] or null.
     function ourMarker(L) {
         var m = L.property("ADBE Marker");
         for (var k = 1; k <= m.numKeys; k++) {
             var v = m.keyValue(k);
-            if (v.comment === COMMENT) return [m.keyTime(k) - L.startTime, v.duration];
+            var prm = v.getParameters();
+            if (prm && prm["AutoTimeRamp"] === "real-time") return [m.keyTime(k) - L.startTime, v.duration, v.comment];
         }
         return null;
+    }
+    function countLegacy(L) {
+        var m = L.property("ADBE Marker"), c = 0;
+        for (var k = 1; k <= m.numKeys; k++) if (m.keyValue(k).comment === LEGACY_COMMENT) c++;
+        return c;
     }
     function expect(name, L, inDur, outDur) {
         var inLayer = L.inPoint - L.startTime, outLayer = L.outPoint - L.startTime;
@@ -60,13 +66,20 @@
             L.startTime = -10;
             L.inPoint = 0;
             L.outPoint = 8;
+            // A v0.4-style marker (visible comment, no hidden param) at a wrong spot: must be migrated.
+            var legacy = new MarkerValue(LEGACY_COMMENT);
+            legacy.duration = 2;
+            L.property("ADBE Marker").setValueAtTime(L.startTime + 13, legacy);
             L.Effects.addProperty("DFLW AutoTimeRamp");
             app.endUndoGroup();
             main.openInViewer(); // the idle hook watches the active comp
             check("setup", true, "comp created");
         } else if (stage === "check1") {
             var L1 = findTest().layer(1);
-            expect("marker_on_apply", L1, 1, 1);              // created by the idle hook after apply
+            expect("marker_on_apply", L1, 1, 1);              // migrated by the idle hook after apply
+            var om = ourMarker(L1);
+            check("marker_has_no_text", om !== null && om[2] === "", om ? "comment='" + om[2] + "'" : "none");
+            check("legacy_marker_migrated", countLegacy(L1) === 0, countLegacy(L1) + " legacy markers left");
             P(L1, 2).setValue(2);                             // ramp in duration -> 2 s (param path)
             expect("marker_after_param_change", L1, 2, 1);
             L1.outPoint = 7;                                  // trim: idle path, checked next stage

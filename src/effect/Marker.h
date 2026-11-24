@@ -9,8 +9,12 @@
 
 #include "Settings.h"
 
-// Comment that identifies our marker. Other markers on the layer are never touched.
-#define ATR_MARKER_COMMENT L"Real-time (Auto Time Ramp)"
+// Our marker carries no visible text; it is identified by a hidden marker parameter
+// (cue point param) ATR_MARKER_KEY = ATR_MARKER_VALUE. Other markers are never touched.
+// v0.3/v0.4 markers were identified by this comment; they are recognised and rewritten without it.
+#define ATR_MARKER_KEY L"AutoTimeRamp"
+#define ATR_MARKER_VALUE L"real-time"
+#define ATR_MARKER_LEGACY_COMMENT L"Real-time (Auto Time Ramp)"
 #define ATR_MARKER_LABEL 9 // AE label colour index: Green
 
 struct MarkerZone

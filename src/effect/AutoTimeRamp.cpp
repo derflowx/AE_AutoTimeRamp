@@ -170,13 +170,18 @@ PF_Err ParamsSetup(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef*[], PF_
     PF_ParamDef def;
     const A_long sup = PF_ParamFlag_SUPERVISE; // so USER_CHANGED_PARAM fires (marker + graph refresh)
 
-    // Speed graph: a colour param whose Effect Controls UI is drawn by us. Its value is unused.
+    // Which curve the graph shows: speed over time, or source time over time (time-remap view).
+    AEFX_CLR_STRUCT(def);
+    def.flags = sup | PF_ParamFlag_CANNOT_TIME_VARY;
+    PF_ADD_POPUP("Graph", ATR_GRAPH_MODE_COUNT, ATR_GRAPH_SPEED, ATR_GRAPH_MODE_CHOICES, DISK_GRAPH_MODE);
+
+    // Graph: a colour param whose Effect Controls UI is drawn by us. Its value is unused.
     AEFX_CLR_STRUCT(def);
     def.flags = PF_ParamFlag_CANNOT_TIME_VARY;
     def.ui_flags = PF_PUI_CONTROL | PF_PUI_DONT_ERASE_CONTROL;
     def.ui_width = ATR_GRAPH_WIDTH;
     def.ui_height = ATR_GRAPH_HEIGHT;
-    PF_ADD_COLOR("Speed graph", 0, 0, 0, DISK_GRAPH);
+    PF_ADD_COLOR("Ramp graph", 0, 0, 0, DISK_GRAPH);
 
     AEFX_CLR_STRUCT(def);
     PF_ADD_TOPIC("Ramp in", DISK_IN_TOPIC);

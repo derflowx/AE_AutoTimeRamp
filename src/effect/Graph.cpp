@@ -187,34 +187,62 @@ PF_Err DrawSpeedGraph(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* par
         const float py = Y0 + pad + line, ph = H - 2 * pad - 2 * line;
         auto xOf = [&](double t) { return px + float((t - solved.inPoint) / L) * pw; };
 
-        // Log speed axis: 10% .. a bit above the fastest point.
-        const double vTop = std::max({2.0, solved.rampIn.peak, solved.rampOut.peak}) * 1.25;
-        const double lgMin = std::log10(0.1), lgMax = std::log10(vTop);
-        auto yOf = [&](double v) {
-            const double lg = std::log10(std::max(v, 0.1));
-            return py + ph - float((lg - lgMin) / (lgMax - lgMin)) * ph;
-        };
-
         // Zones.
         const double rtA = solved.RealTimeStart(), rtB = solved.RealTimeEnd();
         c.FillRect(xOf(solved.inPoint), py, xOf(rtA) - xOf(solved.inPoint), ph, rampFill);
         c.FillRect(xOf(rtA), py, xOf(rtB) - xOf(rtA), ph, rtFill);
         c.FillRect(xOf(rtB), py, xOf(solved.outPoint) - xOf(rtB), ph, rampFill);
 
-        // 100% reference line and its label.
-        c.Line(px, yOf(1.0), px + pw, yOf(1.0), grid, 1.0f);
-        c.Text(L"100%", px + 2.0f, yOf(1.0) - 2.0f, dim, kDRAWBOT_TextAlignment_Left);
-
-        // Speed curve, one point per pixel.
+        // One sample per pixel column.
         const int n = std::max(2, std::min(2048, int(pw)));
         float xs[2048], ys[2048];
+        double srcAt[2048], speedAt[2048];
+        double srcMin = 1e300, srcMax = -1e300;
         for (int i = 0; i < n; ++i)
         {
             const double t = solved.inPoint + L * i / (n - 1);
+            const atr::Sample smp = atr::Evaluate(solved, t);
             xs[i] = xOf(t);
-            ys[i] = yOf(atr::Evaluate(solved, t).speed);
+            srcAt[i] = smp.source;
+            speedAt[i] = smp.speed;
+            srcMin = std::min(srcMin, smp.source);
+            srcMax = std::max(srcMax, smp.source);
         }
-        c.Polyline(xs, ys, n, curve, 2.0f);
+
+        const bool timeMode = params[ATR_GRAPH_MODE] && params[ATR_GRAPH_MODE]->u.pd.value == ATR_GRAPH_TIME;
+        if (timeMode)
+        {
+            // Time graph: source time shown at each layer time (what a Time Remap graph would show).
+            // Dashed-looking grey diagonal = untouched 1:1 playback for comparison.
+            const double lo = std::min(srcMin, solved.inPoint), hi = std::max(srcMax, solved.outPoint);
+            const double span = std::max(1e-6, hi - lo);
+            auto yOfS = [&](double s) { return py + ph - float((s - lo) / span) * ph; };
+            for (int k = 0; k < 24; k += 2) // dashed 1:1 reference
+            {
+                const double t0 = solved.inPoint + L * k / 24.0, t1 = solved.inPoint + L * (k + 1) / 24.0;
+                c.Line(xOf(t0), yOfS(t0 + solved.shift), xOf(t1), yOfS(t1 + solved.shift), grid, 1.0f);
+            }
+            for (int i = 0; i < n; ++i)
+                ys[i] = yOfS(srcAt[i]);
+            c.Polyline(xs, ys, n, curve, 2.0f);
+            c.Text(Fmt(L"%.1fs", hi), px + 2.0f, py + c.FontSize(), dim, kDRAWBOT_TextAlignment_Left);
+            c.Text(Fmt(L"%.1fs", lo), px + 2.0f, py + ph - 3.0f, dim, kDRAWBOT_TextAlignment_Left);
+        }
+        else
+        {
+            // Speed graph on a log axis: 10% .. a bit above the fastest point.
+            const double vTop = std::max({2.0, solved.rampIn.peak, solved.rampOut.peak}) * 1.25;
+            const double lgMin = std::log10(0.1), lgMax = std::log10(vTop);
+            auto yOf = [&](double v) {
+                const double lg = std::log10(std::max(v, 0.1));
+                return py + ph - float((lg - lgMin) / (lgMax - lgMin)) * ph;
+            };
+            c.Line(px, yOf(1.0), px + pw, yOf(1.0), grid, 1.0f);
+            c.Text(L"100%", px + 2.0f, yOf(1.0) - 2.0f, dim, kDRAWBOT_TextAlignment_Left);
+            for (int i = 0; i < n; ++i)
+                ys[i] = yOf(speedAt[i]);
+            c.Polyline(xs, ys, n, curve, 2.0f);
+        }
 
         // Playhead (current time is in layer time for the effect).
         const double now = double(in_data->current_time) / double(in_data->time_scale);

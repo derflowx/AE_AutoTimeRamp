@@ -65,7 +65,8 @@ In and out have separate presets with a link checkbox.
 - Effect Controls custom UI (v0.3): speed graph with zones, peak speeds, footage used, warnings.
   Drawn with Drawbot on a colour param with `PF_PUI_CONTROL` (its value is unused).
 - Real-time marker (v0.3, display only): one layer duration marker spanning the real-time zone,
-  identified by its comment. Synced in `USER_CHANGED_PARAM` (inside the param change's undo step) and
+  identified by a hidden cue-point parameter `AutoTimeRamp=real-time` (no visible text, since v0.5; older
+  markers identified by the comment "Real-time (Auto Time Ramp)" are migrated). Synced in `USER_CHANGED_PARAM` (inside the param change's undo step) and
   by an idle hook that scans the active comp's layers with the effect and re-syncs after trims (its own
   undo step). The hook only acts when a layer's timing or settings changed since it last looked, so an
   undone marker update isn't re-applied in a loop. On first sight (project open) it only creates a

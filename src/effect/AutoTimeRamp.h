@@ -24,7 +24,7 @@
 #define ATR_DESCRIPTION "Keyframe-free speed ramps at the layer in/out points."
 
 #define MAJOR_VERSION 0
-#define MINOR_VERSION 4
+#define MINOR_VERSION 5
 #define BUG_VERSION 0
 #define STAGE_VERSION PF_Stage_DEVELOP
 #define BUILD_VERSION 1
@@ -46,6 +46,7 @@
 enum
 {
     ATR_INPUT = 0,
+    ATR_GRAPH_MODE,
     ATR_GRAPH,
     ATR_IN_TOPIC,
     ATR_IN_DURATION,
@@ -139,6 +140,7 @@ enum
     DISK_OUT_XF_TOPIC_END = 41,
     DISK_OUT_DIRECTION = 42,
     DISK_EDGES = 43,
+    DISK_GRAPH_MODE = 44,
 };
 
 // Popup strings: order must match atr::Ease / atr::Anchor (popup values are 1-based).
@@ -157,6 +159,14 @@ enum
     ATR_EDGE_MIRROR = 1,
     ATR_EDGE_TRANSPARENT = 2,
     ATR_EDGE_REPEAT = 3
+};
+
+#define ATR_GRAPH_MODE_CHOICES "Speed|Time"
+#define ATR_GRAPH_MODE_COUNT 2
+enum
+{
+    ATR_GRAPH_SPEED = 1,
+    ATR_GRAPH_TIME = 2
 };
 
 #define ATR_GRAPH_HEIGHT 150
