@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+
+  <Import Project="local.props" Condition="Exists('local.props')" />
+
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{6E0B7E2A-4C1F-4D8B-9A51-3F2D7C9A1B10}</ProjectGuid>
+    <RootNamespace>AutoTimeRamp</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+    <AE_SDK Condition="'$(AE_SDK)'==''">$(AE_SDK_ROOT)</AE_SDK>
+    <AE_SDK_EX>$(AE_SDK)\Examples</AE_SDK_EX>
+    <RepoRoot>$(MSBuildThisFileDirectory)..\</RepoRoot>
+  </PropertyGroup>
+
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <PlatformToolset>v143</PlatformToolset>
+    <CharacterSet>MultiByte</CharacterSet>
+    <UseDebugLibraries Condition="'$(Configuration)'=='Debug'">true</UseDebugLibraries>
+    <UseDebugLibraries Condition="'$(Configuration)'=='Release'">false</UseDebugLibraries>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+
+  <PropertyGroup>
+    <TargetName>AutoTimeRamp</TargetName>
+    <TargetExt>.aex</TargetExt>
+    <OutDir>$(RepoRoot)build\$(Configuration)\</OutDir>
+    <IntDir>$(RepoRoot)build\obj\$(Configuration)\</IntDir>
+    <IgnoreImportLibrary>true</IgnoreImportLibrary>
+  </PropertyGroup>
+
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(AE_SDK_EX)\Headers;$(AE_SDK_EX)\Headers\SP;$(AE_SDK_EX)\Headers\Win;$(AE_SDK_EX)\Resources;$(AE_SDK_EX)\Util;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>MSWindows;WIN32;_WINDOWS;NOMINMAX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions Condition="'$(Configuration)'=='Debug'">_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <WarningLevel>Level3</WarningLevel>
+      <RuntimeLibrary Condition="'$(Configuration)'=='Debug'">MultiThreadedDebugDLL</RuntimeLibrary>
+      <RuntimeLibrary Condition="'$(Configuration)'=='Release'">MultiThreadedDLL</RuntimeLibrary>
+      <Optimization Condition="'$(Configuration)'=='Release'">MaxSpeed</Optimization>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+    </ClCompile>
+    <ResourceCompile>
+      <AdditionalIncludeDirectories>$(AE_SDK_EX)\Headers;$(AE_SDK_EX)\Resources;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ResourceCompile>
+    <Link>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <SubSystem>Windows</SubSystem>
+    </Link>
+  </ItemDefinitionGroup>
+
+  <!-- PiPL resource: .r -> preprocess -> PiPLTool -> .rc (same pipeline as the SDK samples). -->
+  <ItemGroup>
+    <CustomBuild Include="..\src\effect\AutoTimeRampPiPL.r">
+      <Message>Compiling the PiPL</Message>
+      <Command>cl /nologo /I "$(AE_SDK_EX)\Headers" /EP "%(FullPath)" &gt; "$(IntDir)%(Filename).rr"
+if errorlevel 1 exit /b 1
+rem PiPLTool silently fails on paths containing spaces, so run it with relative names.
+pushd "$(IntDir)"
+"$(AE_SDK_EX)\Resources\PiPLTool.exe" %(Filename).rr %(Filename).rrc
+set ATR_PIPL_ERR=%errorlevel%
+popd
+if not "%ATR_PIPL_ERR%"=="0" exit /b 1
+cl /nologo /D "MSWindows" /EP "$(IntDir)%(Filename).rrc" &gt; "$(IntDir)%(Filename).rc"
+if errorlevel 1 exit /b 1
+findstr /c:"PiPL" "$(IntDir)%(Filename).rc" &gt;nul || (echo error: PiPL resource is empty &amp; exit /b 1)
+</Command>
+      <Outputs>$(IntDir)%(Filename).rc;%(Outputs)</Outputs>
+    </CustomBuild>
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="$(IntDir)AutoTimeRampPiPL.rc" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ClInclude Include="..\src\core\RampMath.h" />
+    <ClInclude Include="..\src\effect\AutoTimeRamp.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="..\src\core\RampMath.cpp" />
+    <ClCompile Include="..\src\effect\AutoTimeRamp.cpp" />
+  </ItemGroup>
+
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+
+  <Target Name="CheckAESdk" BeforeTargets="PrepareForBuild">
+    <Error Condition="!Exists('$(AE_SDK_EX)\Headers\AE_Effect.h')"
+           Text="AE SDK not found at '$(AE_SDK)'. Copy win\local.props.example to win\local.props and set AE_SDK." />
+  </Target>
+
+  <Target Name="InstallAex" AfterTargets="Build" Condition="'$(ATR_INSTALL_DIR)'!=''">
+    <Copy SourceFiles="$(OutDir)$(TargetName)$(TargetExt)" DestinationFolder="$(ATR_INSTALL_DIR)" />
+    <Message Importance="high" Text="Installed $(TargetName)$(TargetExt) to $(ATR_INSTALL_DIR)" />
+  </Target>
+</Project>

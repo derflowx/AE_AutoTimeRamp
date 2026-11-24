@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copy to local.props (git-ignored) and adjust paths for this machine. -->
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <!-- Folder that contains Examples\Headers of the After Effects SDK. -->
+    <AE_SDK>C:\path\to\AfterEffectsSDK_26.5_win</AE_SDK>
+    <!-- Optional: copy the built .aex here after each build (must be writable). -->
+    <ATR_INSTALL_DIR></ATR_INSTALL_DIR>
+  </PropertyGroup>
+</Project>

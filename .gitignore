@@ -1,0 +1,30 @@
+# Build output
+build/
+out/
+x64/
+*.aex
+*.obj
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.tlog
+*.log
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+
+# Machine-specific paths
+win/local.props
+
+# Adobe SDK (downloaded separately, not redistributable)
+sdk/
+AfterEffectsSDK/
+
+# OS / Dropbox
+Thumbs.db
+.DS_Store
+.dropbox
+.dropbox.attr
