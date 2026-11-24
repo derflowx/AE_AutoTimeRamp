@@ -61,4 +61,18 @@ if ($AETest) {
     return
 }
 
+# A running AE keeps the .aex open, so the linker can't overwrite it. Windows does allow renaming a
+# loaded DLL: move it aside so the build succeeds (AE picks up the new one on its next launch).
+$aex = Join-Path $root "build\$Config\AutoTimeRamp.aex"
+if (Test-Path $aex) {
+    try { [IO.File]::Open($aex, 'Open', 'ReadWrite', 'None').Close() }
+    catch {
+        $locked = Join-Path $root 'build\locked'
+        New-Item -ItemType Directory -Force $locked | Out-Null
+        Get-ChildItem $locked -Filter *.old -ErrorAction SilentlyContinue | Remove-Item -ErrorAction SilentlyContinue
+        Move-Item $aex (Join-Path $locked ("AutoTimeRamp_{0}.aex.old" -f (Get-Date -Format yyyyMMdd_HHmmss)))
+        Write-Host 'AutoTimeRamp.aex is in use (AE running?) - moved it aside; restart AE to load the new build.'
+    }
+}
+
 Invoke-InVsEnv "msbuild `"$root\win\AutoTimeRamp.vcxproj`" /nologo /v:minimal /p:Configuration=$Config /p:Platform=x64"

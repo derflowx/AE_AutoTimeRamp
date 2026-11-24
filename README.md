@@ -4,8 +4,8 @@ After Effects effect (native C++, AE SDK) that speed-ramps a layer into and out 
 in/out points. No Time Remap, no keyframes: everything is derived from the layer's trimmed length.
 Design: [docs/DESIGN.md](docs/DESIGN.md).
 
-Status: **v0.1 spike**: ramps, ease presets and anchors work; no motion blur, Effect Controls graph
-or markers yet.
+Status: **v0.2**: ramps, ease presets, anchors and speed-based motion blur work; no Effect Controls
+graph or markers yet.
 
 ## Layout
 
@@ -56,7 +56,19 @@ The effect appears under **Effect > Time > Auto Time Ramp**.
   - *Head*: starts on the in-point frame.
   - *Tail*: ends on the out-point frame.
 
+- **Motion blur**
+  - *Enable*: on by default.
+  - *Shutter angle*: 180° = shutter open for half a frame, centred on the frame. Up to 720°.
+  - *Max samples*: cap on source samples averaged per frame (1–64, default 16).
+
+  Each frame averages source samples spread across the shutter, one per source frame the shutter
+  sweeps past. Fast parts of a ramp get long streaks. In the real-time zone (and anything under about 2×
+  speed at 180°) the shutter covers less than one source frame, so a single sample is used and the
+  image is untouched.
+
 Real-time length = layer length − ramp in − ramp out. If the ramps don't fit, both shrink proportionally.
+
+Rebuilding while AE is open works: `build.ps1` moves the locked `.aex` aside. Restart AE to load it.
 
 ## Automated AE self-test
 
@@ -71,7 +83,9 @@ With After Effects 2026 running on an **empty project** (Preferences > Scripting
 own time, applies Auto Time Ramp, and reads the post-effect pixel back on every frame with
 `sampleImage()`. [tests/ae/compare_selftest.cpp](tests/ae/compare_selftest.cpp) then checks every frame
 against `RampMath`. It covers sync/head/tail anchors, in/out trims, Settle/Circ/Expo/Whip eases,
-source clamping, and 32/16/8 bpc. All test items are removed afterwards; the project is not saved.
+source clamping, motion blur (shutter angle and sample cap), and 32/16/8 bpc. The green channel is a
+sine of time, so averaging shows up in it: blur cases must match the predicted shutter average and
+visibly differ from an unblurred render. All test items are removed afterwards; the project is not saved.
 
 ## Manual test checklist
 

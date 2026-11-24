@@ -50,7 +50,8 @@
         src.parentFolder = folder;
         var solid = src.layers.addSolid([0, 0, 0], "ATR_time", 64, 64, 1, SRC_DUR);
         var fill = solid.Effects.addProperty("ADBE Fill");
-        fill.property("ADBE Fill-0002").expression = "[time / " + SRC_DUR + ", 0, 0, 1]";
+        // red: linear in time (timing); green: sine of time (non-linear, so averaging = visible blur)
+        fill.property("ADBE Fill-0002").expression = "[time / " + SRC_DUR + ", 0.5 + 0.5 * Math.sin(2 * Math.PI * time), 0, 1]";
 
         var main = proj.items.addComp("ATR_main", 64, 64, 1, 30, FPS);
         main.parentFolder = folder;
@@ -60,12 +61,19 @@
         var fx = L.Effects.addProperty("DFLW AutoTimeRamp");
         var P = leafParams(fx, []);
         for (var k = 0; k < P.length; k++) log("#param," + k + "," + P[k].name + "," + P[k].matchName);
-        // Order: in dur, in src, in ease, out dur, out src, out ease, anchor
+        // Order: in dur, in src, in ease, out dur, out src, out ease, anchor, blur on, shutter, max samples
         var inDur = P[0], inSrc = P[1], inEase = P[2], outDur = P[3], outSrc = P[4], outEase = P[5], anchor = P[6];
+        var blurOn = P[7], shutter = P[8], maxSamples = P[9];
+        var BLUR = [0, 180, 16]; // enable, shutter angle, max samples; changed between case groups
 
         var nul = main.layers.addNull();
-        var slider = nul.Effects.addProperty("ADBE Slider Control").property(1);
+        // Adding an effect invalidates earlier property references, so add both before grabbing them.
+        nul.Effects.addProperty("ADBE Slider Control");
+        nul.Effects.addProperty("ADBE Slider Control");
+        var slider = nul.Effects.property(1).property(1);
+        var slider2 = nul.Effects.property(2).property(1);
         slider.expression = 'thisComp.layer("src").sampleImage([32,32],[0.5,0.5],true,time)[0] * ' + SRC_DUR;
+        slider2.expression = 'thisComp.layer("src").sampleImage([32,32],[0.5,0.5],true,time)[1]';
 
         function setup(startTime, inPt, outPt, iD, iS, iE, oD, oS, oE, an) {
             L.startTime = startTime;
@@ -74,17 +82,20 @@
             inDur.setValue(iD); inSrc.setValue(iS); inEase.setValue(iE);
             outDur.setValue(oD); outSrc.setValue(oS); outEase.setValue(oE);
             anchor.setValue(an);
+            blurOn.setValue(BLUR[0]); shutter.setValue(BLUR[1]); maxSamples.setValue(BLUR[2]);
         }
         // Header per case: everything the C++ comparer needs (layer times = comp time - startTime).
         function run(name, startTime, inPt, outPt, iD, iS, iE, oD, oS, oE, an) {
             setup(startTime, inPt, outPt, iD, iS, iE, oD, oS, oE, an);
             log("#case," + name + "," + (inPt - startTime) + "," + (outPt - startTime) + "," +
-                iD + "," + iS + "," + iE + "," + oD + "," + oS + "," + oE + "," + an + "," + proj.bitsPerChannel);
+                iD + "," + iS + "," + iE + "," + oD + "," + oS + "," + oE + "," + an + "," + proj.bitsPerChannel + "," +
+                BLUR[0] + "," + BLUR[1] + "," + BLUR[2]);
             var f0 = Math.round(inPt * FPS), f1 = Math.round(outPt * FPS);
             for (var f = f0; f < f1; f++) {
                 var c = f / FPS;
                 var v = slider.valueAtTime(c, false);
-                log(name + "," + (c - startTime) + "," + v);
+                var g = slider2.valueAtTime(c, false);
+                log(name + "," + (c - startTime) + "," + v + "," + g);
             }
         }
 
@@ -97,6 +108,16 @@
         run("settle_slowout", -10, 0, 7, 0.5, 3, 7, 1.5, 0.6, 6, 1); // fast settle in, slow circ out
         run("expo_whip", -30, 0, 4, 1.2, 12, 5, 0.8, 9, 4, 1);
         run("clamp_head", -2, 0, 7, 1, 5, 1, 1, 5, 1, 1);         // ramp in needs source before 0
+
+        // Motion blur: each frame must equal the average of the shutter samples.
+        BLUR = [1, 180, 16];
+        run("blur_default", -10, 0, 7, 1, 5, 1, 1, 5, 1, 1);
+        BLUR = [1, 360, 4];
+        run("blur_360_cap4", -10, 0, 7, 1, 5, 1, 1, 5, 1, 1);
+        BLUR = [1, 270, 32];
+        run("blur_expo_whip", -30, 0, 4, 1.2, 12, 5, 0.8, 9, 4, 1);
+        run("blur_clamp", -2, 0, 7, 1, 5, 1, 1, 5, 1, 1);
+        BLUR = [1, 180, 16];
         // OCIO-managed projects only allow 32 bpc; switch to Adobe colour management for the 8/16 bpc runs.
         // colorManagementSystem is numeric (0 = Adobe, 1 = OCIO); the enum object isn't exposed in AE 26.
         var ADOBE_CMS = (typeof ColorManagementSystem !== "undefined") ? ColorManagementSystem.ADOBE : 0;

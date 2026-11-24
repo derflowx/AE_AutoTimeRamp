@@ -175,8 +175,47 @@ static void TestEdgeCases()
     CHECK_NEAR(f.rampIn.source, MinSource(Ease::Snap, 2.0), 1e-12, "freeze source");
 }
 
+static void TestShutter()
+{
+    RampInput in;
+    in.inPoint = 10.0;
+    in.outPoint = 17.0;
+    in.rampIn = {1.0, 5.0, Ease::Snap};
+    in.rampOut = {1.0, 5.0, Ease::Snap};
+    const Solved s = Solve(in);
+    const double fd = 1.0 / 25.0;
+    double st[kMaxShutterSamples];
+    MotionBlur mb; // on, 180 degrees, 16 samples
+
+    // Real-time zone: single sample at exactly t (image untouched).
+    CHECK(ShutterSamples(s, 13.0, fd, mb, st) == 1, "real-time single sample");
+    CHECK_NEAR(st[0], 13.0, 1e-12, "real-time sample is t");
+
+    // At the cut the speed is 17x: half a frame of shutter sweeps ~8.5 source frames -> 9 samples.
+    const int n = ShutterSamples(s, 10.0 + 0.5 * fd, fd, mb, st);
+    CHECK(n >= 8 && n <= 10, "sample count follows speed");
+    for (int i = 1; i < n; ++i)
+        CHECK(st[i] > st[i - 1], "samples increase in time");
+
+    // Cap and disable.
+    mb.maxSamples = 4;
+    CHECK(ShutterSamples(s, 10.0 + 0.5 * fd, fd, mb, st) == 4, "max samples cap");
+    mb.enabled = false;
+    CHECK(ShutterSamples(s, 10.0 + 0.5 * fd, fd, mb, st) == 1, "disabled");
+    CHECK_NEAR(st[0], Evaluate(s, 10.0 + 0.5 * fd).source, 1e-12, "disabled sample is unblurred");
+
+    // Wider shutter sweeps proportionally more.
+    mb.enabled = true;
+    mb.maxSamples = 64;
+    const int n180 = ShutterSamples(s, 10.2, fd, mb, st);
+    mb.shutterAngle = 360.0;
+    const int n360 = ShutterSamples(s, 10.2, fd, mb, st);
+    CHECK(n360 > n180, "360 shutter takes more samples");
+}
+
 int main()
 {
+    TestShutter();
     TestIntegrals();
     TestPeakSolve();
     TestNoReverse();

@@ -120,6 +120,27 @@ double RampConsumed(const SolvedRamp& r, double tau);
 // Evaluate the mapping at layer time t (seconds).
 Sample Evaluate(const Solved& s, double t);
 
+// ---- Speed-based motion blur --------------------------------------------------------------------
+//
+// A virtual shutter, centred on the output frame, is open for (shutterAngle / 360) frames of timeline
+// time. Samples are spread evenly across it and each is mapped through Evaluate(), so the blur length
+// follows the ramp's speed. Sample count = source frames swept by the shutter (rounded up), capped.
+// When the shutter sweeps less than one source frame (e.g. the real-time zone at 180 degrees),
+// a single sample at exactly t is used, so the image is untouched.
+
+constexpr int kMaxShutterSamples = 64;
+
+struct MotionBlur
+{
+    bool enabled = true;
+    double shutterAngle = 180.0; // degrees, 0..720
+    int maxSamples = 16;         // 1..kMaxShutterSamples
+};
+
+// Fills `sourceTimes` (capacity kMaxShutterSamples) and returns the sample count (>= 1).
+// frameDuration is the comp frame duration in seconds.
+int ShutterSamples(const Solved& s, double t, double frameDuration, const MotionBlur& mb, double* sourceTimes);
+
 const char* EaseName(Ease ease);
 
 } // namespace atr

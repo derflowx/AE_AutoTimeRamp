@@ -230,6 +230,26 @@ Sample Evaluate(const Solved& s, double t)
     return out;
 }
 
+int ShutterSamples(const Solved& s, double t, double frameDuration, const MotionBlur& mb, double* sourceTimes)
+{
+    sourceTimes[0] = Evaluate(s, t).source;
+    if (!mb.enabled || frameDuration <= 0.0 || mb.shutterAngle <= 0.0 || mb.maxSamples <= 1)
+        return 1;
+
+    const double open = frameDuration * std::min(mb.shutterAngle, 720.0) / 360.0;
+    const double a = t - 0.5 * open;
+    const double b = t + 0.5 * open;
+    const double sweptFrames = std::fabs(Evaluate(s, b).source - Evaluate(s, a).source) / frameDuration;
+    if (sweptFrames < 1.0 + 1e-6)
+        return 1;
+
+    const int cap = std::min(mb.maxSamples, kMaxShutterSamples);
+    const int n = std::min(cap, static_cast<int>(std::ceil(sweptFrames - 1e-6)));
+    for (int i = 0; i < n; ++i)
+        sourceTimes[i] = Evaluate(s, a + open * (i + 0.5) / n).source;
+    return n;
+}
+
 const char* EaseName(Ease ease)
 {
     switch (ease)

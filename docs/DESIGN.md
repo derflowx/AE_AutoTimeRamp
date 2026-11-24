@@ -54,8 +54,14 @@ In and out have separate presets with a link checkbox.
 ## Effect features
 
 - Render: check out own layer at the remapped source time.
-- Speed-based motion blur: above a threshold speed, average multiple source samples per frame
-  (shutter angle, sample count). Optional frame blending for slow parts.
+- Speed-based motion blur (v0.2, done): centred shutter of `angle/360` frames; samples spread evenly
+  across it and mapped through the ramp. Sample count = source frames swept (rounded up), capped by
+  Max samples. Under one swept frame, a single sample at t keeps the image untouched. Box filter over
+  premultiplied pixels (8/16/32 bpc). Source times go to AE on a grid of at least 1/6000 s, so precomps
+  get sub-frame samples. Frame blending for slow parts is still open.
+  Revisit later, once the rest is done: footage at ~2–4× can show stepping (only 2–4 distinct frames
+  averaged). Options are fractional sample weights to fade the blur in smoothly (cheap) or optional
+  optical-flow in-betweens for footage (big).
 - Effect Controls custom UI: speed graph with zones, peak speeds, footage used, warnings.
 - One layer duration marker spanning the real-time zone, kept updated by the effect (display only).
 
