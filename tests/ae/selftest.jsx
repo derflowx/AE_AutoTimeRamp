@@ -58,13 +58,20 @@
         var L = main.layers.add(src);
         L.name = "src";
 
-        var fx = L.Effects.addProperty("DFLW AutoTimeRamp");
-        var P = leafParams(fx, []);
-        for (var k = 0; k < P.length; k++) log("#param," + k + "," + P[k].name + "," + P[k].matchName);
-        // Order: in dur, in src, in ease, out dur, out src, out ease, anchor, blur on, shutter, max samples
-        var inDur = P[0], inSrc = P[1], inEase = P[2], outDur = P[3], outSrc = P[4], outEase = P[5], anchor = P[6];
-        var blurOn = P[7], shutter = P[8], maxSamples = P[9];
-        var BLUR = [0, 180, 16]; // enable, shutter angle, max samples; changed between case groups
+        L.Effects.addProperty("DFLW AutoTimeRamp");
+        // Params are looked up by disk ID (match name suffix) every time: changing the ease to Custom
+        // re-lays out the effect UI, which can invalidate property references held across calls.
+        function P(disk) {
+            var id = "000" + disk;
+            return L.property("ADBE Effect Parade").property("DFLW AutoTimeRamp")
+                .property("DFLW AutoTimeRamp-" + id.substr(id.length - 4));
+        }
+        var D = { inDur: 2, inSrc: 3, inEase: 4, outDur: 7, outSrc: 8, outEase: 9, anchor: 11,
+                  blurOn: 13, shutter: 14, maxSamples: 15, inBz: [17, 18, 19, 20], outBz: [21, 22, 23, 24],
+                  link: 25, marker: 27 };
+        var BLUR = [0, 180, 16];                 // enable, shutter angle, max samples
+        var LINK = 0;                            // ramp out "Same as ramp in"
+        var BZ_IN = [0, 0.8, 0.2, 1], BZ_OUT = [0, 0.8, 0.2, 1];
 
         var nul = main.layers.addNull();
         // Adding an effect invalidates earlier property references, so add both before grabbing them.
@@ -79,17 +86,19 @@
             L.startTime = startTime;
             L.inPoint = inPt;
             L.outPoint = outPt;
-            inDur.setValue(iD); inSrc.setValue(iS); inEase.setValue(iE);
-            outDur.setValue(oD); outSrc.setValue(oS); outEase.setValue(oE);
-            anchor.setValue(an);
-            blurOn.setValue(BLUR[0]); shutter.setValue(BLUR[1]); maxSamples.setValue(BLUR[2]);
+            P(D.inDur).setValue(iD); P(D.inSrc).setValue(iS); P(D.inEase).setValue(iE);
+            P(D.outDur).setValue(oD); P(D.outSrc).setValue(oS); P(D.outEase).setValue(oE);
+            P(D.anchor).setValue(an);
+            P(D.blurOn).setValue(BLUR[0]); P(D.shutter).setValue(BLUR[1]); P(D.maxSamples).setValue(BLUR[2]);
+            P(D.link).setValue(LINK);
+            for (var b = 0; b < 4; b++) { P(D.inBz[b]).setValue(BZ_IN[b]); P(D.outBz[b]).setValue(BZ_OUT[b]); }
         }
         // Header per case: everything the C++ comparer needs (layer times = comp time - startTime).
         function run(name, startTime, inPt, outPt, iD, iS, iE, oD, oS, oE, an) {
             setup(startTime, inPt, outPt, iD, iS, iE, oD, oS, oE, an);
             log("#case," + name + "," + (inPt - startTime) + "," + (outPt - startTime) + "," +
                 iD + "," + iS + "," + iE + "," + oD + "," + oS + "," + oE + "," + an + "," + proj.bitsPerChannel + "," +
-                BLUR[0] + "," + BLUR[1] + "," + BLUR[2]);
+                BLUR[0] + "," + BLUR[1] + "," + BLUR[2] + "," + LINK + "," + BZ_IN.join(",") + "," + BZ_OUT.join(","));
             var f0 = Math.round(inPt * FPS), f1 = Math.round(outPt * FPS);
             for (var f = f0; f < f1; f++) {
                 var c = f / FPS;
@@ -108,6 +117,15 @@
         run("settle_slowout", -10, 0, 7, 0.5, 3, 7, 1.5, 0.6, 6, 1); // fast settle in, slow circ out
         run("expo_whip", -30, 0, 4, 1.2, 12, 5, 0.8, 9, 4, 1);
         run("clamp_head", -2, 0, 7, 1, 5, 1, 1, 5, 1, 1);         // ramp in needs source before 0
+
+        // Custom bezier eases (popup 10) and linked ramp out.
+        BZ_IN = [0, 0.8, 0.2, 1]; BZ_OUT = [0.42, 0, 0.58, 1];
+        run("custom_bezier", -10, 0, 7, 1, 5, 10, 1.5, 4, 10, 1);
+        BZ_IN = [0.1, 0.9, 0.3, 1]; BZ_OUT = [0, 0.8, 0.2, 1];
+        LINK = 1;
+        run("linked_custom", -10, 0, 7, 1.2, 6, 10, 0.3, 0.5, 1, 1); // out values must be ignored
+        run("linked_whip", -10, 0, 7, 0.8, 4, 4, 2, 9, 7, 1);
+        LINK = 0; BZ_IN = [0, 0.8, 0.2, 1]; BZ_OUT = [0, 0.8, 0.2, 1];
 
         // Motion blur: each frame must equal the average of the shutter samples.
         BLUR = [1, 180, 16];

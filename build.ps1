@@ -42,6 +42,8 @@ if ($Tests) {
 }
 
 if ($AETest) {
+    # AfterFX -r starts AE when it isn't running; never do that implicitly.
+    if (-not (Get-Process AfterFX -ErrorAction SilentlyContinue)) { throw 'After Effects is not running. Start it with an empty project first.' }
     $out = Join-Path $root 'build\tests'
     New-Item -ItemType Directory -Force $out | Out-Null
     Invoke-InVsEnv "cl /nologo /std:c++17 /EHsc /W4 /O2 `"$root\tests\ae\compare_selftest.cpp`" `"$root\src\core\RampMath.cpp`" /Fo`"$out\\`" /Fe`"$out\compare_selftest.exe`" >nul"
@@ -57,7 +59,29 @@ if ($AETest) {
     if (-not (Test-Path $csv)) { throw 'No result from After Effects (is it running, with file access allowed for scripts?)' }
     Start-Sleep -Milliseconds 500
     & "$out\compare_selftest.exe" $csv
-    if ($LASTEXITCODE -ne 0) { throw 'AE self-test failed.' }
+    $pixelOk = ($LASTEXITCODE -eq 0)
+
+    # Marker test: staged, so AE's idle hook gets to run between the steps.
+    Copy-Item "$root\tests\ae\marker_test.jsx" $tmp -Force
+    $mres = Join-Path $tmp 'marker_result.txt'
+    Remove-Item $mres -ErrorAction SilentlyContinue
+    foreach ($stage in 'setup', 'check1', 'check2', 'check3') {
+        if (-not (Get-Process AfterFX -ErrorAction SilentlyContinue)) { throw "After Effects is no longer running (before marker stage '$stage') - it crashed?" }
+        Set-Content -Path (Join-Path $tmp 'marker_stage.txt') -Value $stage -Encoding ascii
+        & $AfterFX -r (Join-Path $tmp 'marker_test.jsx')
+        $deadline = (Get-Date).AddMinutes(2)
+        while (-not ((Test-Path $mres) -and (Select-String -Path $mres -SimpleMatch "#stage_done,$stage" -Quiet)) -and (Get-Date) -lt $deadline) {
+            Start-Sleep -Milliseconds 300
+        }
+        Start-Sleep -Milliseconds 1500 # let the idle hook run
+    }
+    Write-Host ''
+    Write-Host 'Marker test:'
+    $markerLines = Get-Content $mres | Where-Object { $_ -notmatch '^#' }
+    $markerLines | ForEach-Object { Write-Host "  $_" }
+    $markerOk = ($markerLines.Count -gt 0) -and -not ($markerLines | Where-Object { $_ -like 'FAIL*' })
+
+    if (-not ($pixelOk -and $markerOk)) { throw 'AE self-test failed.' }
     return
 }
 

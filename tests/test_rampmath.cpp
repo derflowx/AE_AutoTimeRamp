@@ -41,7 +41,7 @@ static Ease AllEases(int i)
 // Analytic integrals must match numeric integration of the shape functions.
 static void TestIntegrals()
 {
-    for (int i = 0; i < static_cast<int>(Ease::Count); ++i)
+    for (int i = 0; i < static_cast<int>(Ease::Custom); ++i) // presets only
     {
         const Ease e = AllEases(i);
         CHECK_NEAR(EaseValue(e, 0.0), 0.0, 1e-12, EaseName(e));
@@ -71,11 +71,12 @@ static void TestPeakSolve()
     for (int i = 0; i < static_cast<int>(Ease::Count); ++i)
     {
         const Ease e = AllEases(i);
-        SolvedRamp r;
-        r.ease = e;
-        r.duration = 1.3;
-        r.source = 7.0;
-        r.peak = SolvePeak(e, r.duration, r.source);
+        RampInput in;
+        in.outPoint = 10.0;
+        in.rampIn = {1.3, 7.0, e};
+        const SolvedRamp r = Solve(in).rampIn;
+        if (e != Ease::Custom)
+            CHECK_NEAR(r.peak, SolvePeak(e, 1.3, 7.0), 1e-9, "solve matches SolvePeak");
         CHECK_NEAR(RampConsumed(r, r.duration), r.source, 1e-9, EaseName(e));
         CHECK_NEAR(RampSpeed(r, 1.0), 1.0, 1e-9, "lands on 100%");
         CHECK_NEAR(RampSpeed(r, 0.0), r.peak, 1e-9, "peak at the cut");
@@ -175,6 +176,63 @@ static void TestEdgeCases()
     CHECK_NEAR(f.rampIn.source, MinSource(Ease::Snap, 2.0), 1e-12, "freeze source");
 }
 
+static void TestBezier()
+{
+    const double lin[4] = {0.0, 0.0, 1.0, 1.0};
+    const double easeInOut[4] = {0.42, 0.0, 0.58, 1.0};
+    const double overshoot[4] = {0.3, 1.8, 0.6, 1.4};
+    for (double u = 0.0; u <= 1.0; u += 0.05)
+    {
+        CHECK_NEAR(BezierEase(lin, u), u, 1e-6, "bezier (0,0,1,1) is linear");
+        CHECK_NEAR(BezierEase(easeInOut, u) + BezierEase(easeInOut, 1.0 - u), 1.0, 1e-6, "ease-in-out symmetric");
+        const double v = BezierEase(overshoot, u);
+        CHECK(v >= 0.0 && v <= 1.0, "bezier clamped to [0,1]");
+    }
+    // CSS ease (0.25, 0.1, 0.25, 1) at x=0.5 is ~0.8024 (reference value).
+    const double cssEase[4] = {0.25, 0.1, 0.25, 1.0};
+    CHECK_NEAR(BezierEase(cssEase, 0.5), 0.8024033877399112, 1e-4, "css ease reference");
+
+    // Table integral matches dense numeric integration.
+    EaseTable t;
+    BuildEaseTable(kDefaultBezier, t);
+    const int n = 50000;
+    double sum = 0.0;
+    for (int k = 0; k < n; ++k)
+        sum += BezierEase(kDefaultBezier, (k + 0.5) / n) / n;
+    // The default curve is infinitely steep at u=0, so a 512-point table is within ~5e-5 of the exact
+    // integral. Budgets are solved against the same table, so ramps still consume exactly S.
+    CHECK_NEAR(t.integral[kEaseTableSize], sum, 1e-4, "table integral");
+
+    // Custom ramp consumes exactly its footage budget and lands on 100%.
+    RampInput in;
+    in.inPoint = 0.0;
+    in.outPoint = 8.0;
+    in.rampIn = {1.0, 6.0, Ease::Custom};
+    const Solved s = Solve(in);
+    CHECK_NEAR(RampConsumed(s.rampIn, s.rampIn.duration), 6.0, 1e-9, "custom budget");
+    CHECK_NEAR(RampSpeed(s.rampIn, 1.0), 1.0, 1e-9, "custom lands on 100%");
+    CHECK_NEAR(Evaluate(s, 1.0).source, 1.0, 1e-9, "custom sync boundary");
+}
+
+static void TestLink()
+{
+    RampInput in;
+    in.inPoint = 0.0;
+    in.outPoint = 10.0;
+    in.rampIn = {1.5, 9.0, Ease::Whip};
+    in.rampOut = {0.3, 0.5, Ease::Linear};
+    in.linkOut = true;
+    in.sourceMin = -100.0; // ramp in reaches 7.5 s before the in-point; don't clamp for this check
+    const Solved s = Solve(in);
+    CHECK_NEAR(s.rampOut.duration, 1.5, 1e-12, "linked duration");
+    CHECK_NEAR(s.rampOut.source, 9.0, 1e-12, "linked footage");
+    CHECK(s.rampOut.ease == Ease::Whip, "linked ease");
+    CHECK_NEAR(s.rampOut.peak, s.rampIn.peak, 1e-12, "linked peak");
+    // Mirror symmetry around the layer centre (sync anchor): source(t) + source(L - t) = L.
+    for (double t = 0.0; t <= 10.0; t += 0.25)
+        CHECK_NEAR(Evaluate(s, t).source + Evaluate(s, 10.0 - t).source, 10.0, 1e-9, "linked mirror");
+}
+
 static void TestShutter()
 {
     RampInput in;
@@ -215,6 +273,8 @@ static void TestShutter()
 
 int main()
 {
+    TestBezier();
+    TestLink();
     TestShutter();
     TestIntegrals();
     TestPeakSolve();

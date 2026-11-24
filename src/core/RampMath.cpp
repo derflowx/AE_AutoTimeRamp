@@ -116,14 +116,87 @@ double MinSource(Ease ease, double duration)
     return std::max(0.0, duration * (mean - dip));
 }
 
+double BezierEase(const double bz[4], double u)
+{
+    u = Clamp01(u);
+    const double x1 = Clamp01(bz[0]), y1 = bz[1], x2 = Clamp01(bz[2]), y2 = bz[3];
+    // Cubic bezier P0=(0,0) P1=(x1,y1) P2=(x2,y2) P3=(1,1). x(s) is monotonic for x1,x2 in [0,1].
+    auto bx = [&](double s) { const double m = 1.0 - s; return 3.0 * m * m * s * x1 + 3.0 * m * s * s * x2 + s * s * s; };
+    auto by = [&](double s) { const double m = 1.0 - s; return 3.0 * m * m * s * y1 + 3.0 * m * s * s * y2 + s * s * s; };
+    auto dbx = [&](double s) {
+        const double m = 1.0 - s;
+        return 3.0 * m * m * x1 + 6.0 * m * s * (x2 - x1) + 3.0 * s * s * (1.0 - x2);
+    };
+    // Newton, falling back to bisection when the slope is flat.
+    double s = u;
+    for (int i = 0; i < 8; ++i)
+    {
+        const double d = dbx(s);
+        if (std::fabs(d) < 1e-9)
+            break;
+        const double next = s - (bx(s) - u) / d;
+        if (next < 0.0 || next > 1.0)
+            break;
+        s = next;
+    }
+    if (std::fabs(bx(s) - u) > 1e-9)
+    {
+        double lo = 0.0, hi = 1.0;
+        s = u;
+        for (int i = 0; i < 60; ++i)
+        {
+            if (bx(s) < u)
+                lo = s;
+            else
+                hi = s;
+            s = 0.5 * (lo + hi);
+        }
+    }
+    return Clamp01(by(s));
+}
+
+void BuildEaseTable(const double bezier[4], EaseTable& t)
+{
+    const double h = 1.0 / kEaseTableSize;
+    for (int i = 0; i <= kEaseTableSize; ++i)
+        t.e[i] = BezierEase(bezier, i * h);
+    t.e[0] = 0.0;
+    t.e[kEaseTableSize] = 1.0;
+    t.integral[0] = 0.0;
+    for (int i = 0; i < kEaseTableSize; ++i)
+        t.integral[i + 1] = t.integral[i] + 0.5 * h * (t.e[i] + t.e[i + 1]);
+}
+
 namespace
 {
+double TableValue(const EaseTable& t, double u)
+{
+    u = Clamp01(u);
+    const double x = u * kEaseTableSize;
+    const int i = std::min(kEaseTableSize - 1, static_cast<int>(x));
+    const double f = x - i;
+    return t.e[i] + (t.e[i + 1] - t.e[i]) * f;
+}
+
+double TableIntegral(const EaseTable& t, double u)
+{
+    u = Clamp01(u);
+    const double h = 1.0 / kEaseTableSize;
+    const double x = u * kEaseTableSize;
+    const int i = std::min(kEaseTableSize - 1, static_cast<int>(x));
+    const double d = (x - i) * h; // distance into the cell, in u units
+    // exact integral of the linear segment from the cell start
+    return t.integral[i] + t.e[i] * d + (t.e[i + 1] - t.e[i]) * d * d / (2.0 * h);
+}
+
 SolvedRamp SolveRamp(const RampSpec& spec, double duration, double source)
 {
     SolvedRamp r;
     r.ease = spec.ease;
     r.duration = std::max(0.0, duration);
     r.source = std::max(0.0, source);
+    if (r.ease == Ease::Custom)
+        BuildEaseTable(spec.bezier, r.table);
     if (r.duration <= kEps)
     {
         r.duration = 0.0;
@@ -131,17 +204,30 @@ SolvedRamp SolveRamp(const RampSpec& spec, double duration, double source)
         r.peak = 1.0;
         return r;
     }
-    double peak = SolvePeak(spec.ease, r.duration, r.source);
+    // S/R = vPeak + (1 - vPeak) * mean - dip
+    const double mean = std::min(RampEaseIntegral(r, 1.0), 1.0 - 1e-6);
+    const double dip = DipDepth(r.ease) * DipIntegral(1.0);
+    double peak = (r.source / r.duration + dip - mean) / (1.0 - mean);
     if (peak < 0.0)
     {
         peak = 0.0;
-        r.source = MinSource(spec.ease, r.duration);
+        r.source = std::max(0.0, r.duration * (mean - dip));
         r.clampedToFreeze = true;
     }
     r.peak = peak;
     return r;
 }
 } // namespace
+
+double RampEase(const SolvedRamp& r, double u)
+{
+    return r.ease == Ease::Custom ? TableValue(r.table, u) : EaseValue(r.ease, u);
+}
+
+double RampEaseIntegral(const SolvedRamp& r, double u)
+{
+    return r.ease == Ease::Custom ? TableIntegral(r.table, u) : EaseIntegral(r.ease, u);
+}
 
 Solved Solve(const RampInput& in)
 {
@@ -152,10 +238,11 @@ Solved Solve(const RampInput& in)
     s.sourceMax = std::max(in.sourceMax, in.sourceMin);
 
     const double length = s.outPoint - s.inPoint;
+    const RampSpec& out = in.linkOut ? in.rampIn : in.rampOut;
     double durIn = std::max(0.0, in.rampIn.duration);
-    double durOut = std::max(0.0, in.rampOut.duration);
+    double durOut = std::max(0.0, out.duration);
     double srcIn = std::max(0.0, in.rampIn.source);
-    double srcOut = std::max(0.0, in.rampOut.source);
+    double srcOut = std::max(0.0, out.source);
 
     // Ramps longer than the layer: shrink both proportionally, keeping each ramp's compression ratio.
     const double total = durIn + durOut;
@@ -169,7 +256,7 @@ Solved Solve(const RampInput& in)
     }
 
     s.rampIn = SolveRamp(in.rampIn, durIn, srcIn);
-    s.rampOut = SolveRamp(in.rampOut, durOut, srcOut);
+    s.rampOut = SolveRamp(in.linkOut ? in.rampIn : in.rampOut, durOut, srcOut);
 
     switch (in.anchor)
     {
@@ -183,7 +270,7 @@ Solved Solve(const RampInput& in)
 
 double RampSpeed(const SolvedRamp& r, double u)
 {
-    return r.peak + (1.0 - r.peak) * EaseValue(r.ease, u) - DipDepth(r.ease) * DipValue(u);
+    return r.peak + (1.0 - r.peak) * RampEase(r, u) - DipDepth(r.ease) * DipValue(u);
 }
 
 double RampConsumed(const SolvedRamp& r, double tau)
@@ -192,7 +279,7 @@ double RampConsumed(const SolvedRamp& r, double tau)
         return 0.0;
     const double u = Clamp01(tau / r.duration);
     return r.duration *
-           (r.peak * u + (1.0 - r.peak) * EaseIntegral(r.ease, u) - DipDepth(r.ease) * DipIntegral(u));
+           (r.peak * u + (1.0 - r.peak) * RampEaseIntegral(r, u) - DipDepth(r.ease) * DipIntegral(u));
 }
 
 Sample Evaluate(const Solved& s, double t)
@@ -263,6 +350,7 @@ const char* EaseName(Ease ease)
     case Ease::Settle: return "Settle";
     case Ease::Smooth: return "Smooth";
     case Ease::Linear: return "Linear";
+    case Ease::Custom: return "Custom";
     default: return "?";
     }
 }

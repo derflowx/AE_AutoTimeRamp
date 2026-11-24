@@ -3,9 +3,15 @@
 // Re-times its own layer: for every output frame it computes a source time with atr::Evaluate
 // (from the layer's in/out points and the ramp params) and checks out the input layer at that time.
 // No Time Remap property, no keyframes.
+//
+// Files: Settings (param/timing readers), Graph (Effect Controls speed graph),
+//        Marker (real-time layer marker + idle hook), this file (params, UI updates, render).
 
 #include "AutoTimeRamp.h"
-#include "../core/RampMath.h"
+#include "Graph.h"
+#include "Guard.h"
+#include "Marker.h"
+#include "Settings.h"
 
 #include <algorithm>
 #include <cmath>
@@ -15,55 +21,11 @@
 static_assert(ATR_OUT_FLAGS == ATR_OUT_FLAGS_HEX, "Update AE_Effect_Global_OutFlags in AutoTimeRampPiPL.r");
 static_assert(ATR_OUT_FLAGS2 == ATR_OUT_FLAGS2_HEX, "Update AE_Effect_Global_OutFlags_2 in AutoTimeRampPiPL.r");
 
+SPBasicSuite* g_pica = nullptr;
+AEGP_PluginID g_pluginId = 0;
+
 namespace
 {
-// Layer timing that affects the render but is not an effect param, so it is mixed into AE's cache GUID.
-struct LayerTiming
-{
-    double inPoint = 0.0;     // layer time, seconds
-    double outPoint = 0.0;    // layer time, seconds
-    double sourceDur = -1.0;  // seconds; < 0 = unknown / unlimited (stills, text, shapes)
-};
-
-double ToSeconds(const A_Time& t)
-{
-    return t.scale ? static_cast<double>(t.value) / static_cast<double>(t.scale) : 0.0;
-}
-
-PF_Err ReadLayerTiming(PF_InData* in_data, PF_OutData* out_data, LayerTiming& timing)
-{
-    PF_Err err = PF_Err_NONE;
-    AEFX_SuiteScoper<AEGP_PFInterfaceSuite1> pfInterface(
-        in_data, kAEGPPFInterfaceSuite, kAEGPPFInterfaceSuiteVersion1, out_data);
-    AEFX_SuiteScoper<AEGP_LayerSuite9> layerSuite(in_data, kAEGPLayerSuite, kAEGPLayerSuiteVersion9, out_data);
-    AEFX_SuiteScoper<AEGP_ItemSuite9> itemSuite(in_data, kAEGPItemSuite, kAEGPItemSuiteVersion9, out_data);
-
-    AEGP_LayerH layerH = nullptr;
-    ERR(pfInterface->AEGP_GetEffectLayer(in_data->effect_ref, &layerH));
-
-    A_Time inT = {0, 1}, durT = {0, 1};
-    ERR(layerSuite->AEGP_GetLayerInPoint(layerH, AEGP_LTimeMode_LayerTime, &inT));
-    ERR(layerSuite->AEGP_GetLayerDuration(layerH, AEGP_LTimeMode_LayerTime, &durT));
-    if (!err)
-    {
-        timing.inPoint = ToSeconds(inT);
-        timing.outPoint = timing.inPoint + ToSeconds(durT);
-    }
-
-    // Source duration (footage / precomp). Layers without a source item (text, shape) have none.
-    AEGP_ItemH itemH = nullptr;
-    if (!err && layerSuite->AEGP_GetLayerSourceItem(layerH, &itemH) == A_Err_NONE && itemH)
-    {
-        A_Time itemDur = {0, 1};
-        if (itemSuite->AEGP_GetItemDuration(itemH, &itemDur) == A_Err_NONE)
-        {
-            const double d = ToSeconds(itemDur);
-            timing.sourceDur = d > 0.0 ? d : -1.0;
-        }
-    }
-    return err;
-}
-
 // Passed from PreRender to SmartRender: where each shutter sample's buffer sits in layer space.
 struct RenderPlan
 {
@@ -98,57 +60,6 @@ void UnionLRect(const PF_LRect* src, PF_LRect* dst)
     dst->bottom = std::max(dst->bottom, src->bottom);
 }
 
-PF_Err ReadParams(PF_InData* in_data, atr::RampInput& ramp, atr::MotionBlur& blur)
-{
-    PF_Err err = PF_Err_NONE;
-    PF_ParamDef p;
-    const A_long t = in_data->current_time, step = in_data->time_step;
-    const A_u_long scale = in_data->time_scale;
-
-    // In SmartFX, AE checks params checked out during PRE_RENDER back in automatically.
-    auto fl = [&](int idx, double& dst) {
-        AEFX_CLR_STRUCT(p);
-        ERR(PF_CHECKOUT_PARAM(in_data, idx, t, step, scale, &p));
-        if (!err)
-            dst = p.u.fs_d.value;
-    };
-    auto pop = [&](int idx, int& dst) {
-        AEFX_CLR_STRUCT(p);
-        ERR(PF_CHECKOUT_PARAM(in_data, idx, t, step, scale, &p));
-        if (!err)
-            dst = p.u.pd.value - 1; // popups are 1-based
-    };
-
-    int easeIn = 0, easeOut = 0, anchor = 0;
-    fl(ATR_IN_DURATION, ramp.rampIn.duration);
-    fl(ATR_IN_SOURCE, ramp.rampIn.source);
-    pop(ATR_IN_EASE, easeIn);
-    fl(ATR_OUT_DURATION, ramp.rampOut.duration);
-    fl(ATR_OUT_SOURCE, ramp.rampOut.source);
-    pop(ATR_OUT_EASE, easeOut);
-    pop(ATR_ANCHOR, anchor);
-
-    AEFX_CLR_STRUCT(p);
-    ERR(PF_CHECKOUT_PARAM(in_data, ATR_BLUR_ENABLE, t, step, scale, &p));
-    if (!err)
-        blur.enabled = p.u.bd.value != 0;
-    fl(ATR_BLUR_SHUTTER, blur.shutterAngle);
-    AEFX_CLR_STRUCT(p);
-    ERR(PF_CHECKOUT_PARAM(in_data, ATR_BLUR_MAX_SAMPLES, t, step, scale, &p));
-    if (!err)
-        blur.maxSamples = std::max(1, std::min<int>(p.u.sd.value, atr::kMaxShutterSamples));
-
-    if (easeIn < 0 || easeIn >= static_cast<int>(atr::Ease::Count))
-        easeIn = 0;
-    if (easeOut < 0 || easeOut >= static_cast<int>(atr::Ease::Count))
-        easeOut = 0;
-    if (anchor < 0 || anchor >= static_cast<int>(atr::Anchor::Count))
-        anchor = 0;
-    ramp.rampIn.ease = static_cast<atr::Ease>(easeIn);
-    ramp.rampOut.ease = static_cast<atr::Ease>(easeOut);
-    ramp.anchor = static_cast<atr::Anchor>(anchor);
-    return err;
-}
 
 PF_Err About(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef*[], PF_LayerDef*)
 {
@@ -157,38 +68,81 @@ PF_Err About(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef*[], PF_LayerD
     return PF_Err_NONE;
 }
 
-PF_Err GlobalSetup(PF_InData*, PF_OutData* out_data, PF_ParamDef*[], PF_LayerDef*)
+PF_Err GlobalSetup(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef*[], PF_LayerDef*)
 {
     out_data->my_version = PF_VERSION(MAJOR_VERSION, MINOR_VERSION, BUG_VERSION, STAGE_VERSION, BUILD_VERSION);
     out_data->out_flags = ATR_OUT_FLAGS;
     out_data->out_flags2 = ATR_OUT_FLAGS2;
+
+    if (in_data->appl_id != kAppID_Premiere && !g_pluginId)
+    {
+        g_pica = in_data->pica_basicP;
+        try
+        {
+            AEFX_SuiteScoper<AEGP_UtilitySuite6> util(in_data, kAEGPUtilitySuite, kAEGPUtilitySuiteVersion6, out_data);
+            if (util->AEGP_RegisterWithAEGP(nullptr, ATR_NAME, &g_pluginId) == A_Err_NONE)
+                RegisterMarkerIdleHook();
+        }
+        catch (...)
+        {
+            g_pluginId = 0; // marker features off; rendering still works
+        }
+    }
     return PF_Err_NONE;
+}
+
+PF_Err AddBezierSliders(PF_InData* in_data, int diskX1, int diskY1, int diskX2, int diskY2)
+{
+    PF_Err err = PF_Err_NONE;
+    PF_ParamDef def;
+    const A_long sup = PF_ParamFlag_SUPERVISE;
+    PF_ADD_FLOAT_SLIDERX("Bezier x1", 0, 1, 0, 1, atr::kDefaultBezier[0], PF_Precision_HUNDREDTHS, 0, sup, diskX1);
+    PF_ADD_FLOAT_SLIDERX("Bezier y1", -1, 2, 0, 1, atr::kDefaultBezier[1], PF_Precision_HUNDREDTHS, 0, sup, diskY1);
+    PF_ADD_FLOAT_SLIDERX("Bezier x2", 0, 1, 0, 1, atr::kDefaultBezier[2], PF_Precision_HUNDREDTHS, 0, sup, diskX2);
+    PF_ADD_FLOAT_SLIDERX("Bezier y2", -1, 2, 0, 1, atr::kDefaultBezier[3], PF_Precision_HUNDREDTHS, 0, sup, diskY2);
+    return err;
 }
 
 PF_Err ParamsSetup(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef*[], PF_LayerDef*)
 {
     PF_Err err = PF_Err_NONE;
     PF_ParamDef def;
+    const A_long sup = PF_ParamFlag_SUPERVISE; // so USER_CHANGED_PARAM fires (marker + graph refresh)
+
+    // Speed graph: a colour param whose Effect Controls UI is drawn by us. Its value is unused.
+    AEFX_CLR_STRUCT(def);
+    def.flags = PF_ParamFlag_CANNOT_TIME_VARY;
+    def.ui_flags = PF_PUI_CONTROL | PF_PUI_DONT_ERASE_CONTROL;
+    def.ui_width = ATR_GRAPH_WIDTH;
+    def.ui_height = ATR_GRAPH_HEIGHT;
+    PF_ADD_COLOR("Speed graph", 0, 0, 0, DISK_GRAPH);
 
     AEFX_CLR_STRUCT(def);
     PF_ADD_TOPIC("Ramp in", DISK_IN_TOPIC);
-    PF_ADD_FLOAT_SLIDERX("Duration (s)", 0, 60, 0, 5, 1.0, PF_Precision_HUNDREDTHS, 0, 0, DISK_IN_DURATION);
-    PF_ADD_FLOAT_SLIDERX("Footage used (s)", 0, 3600, 0, 30, 5.0, PF_Precision_HUNDREDTHS, 0, 0, DISK_IN_SOURCE);
+    PF_ADD_FLOAT_SLIDERX("Duration (s)", 0, 60, 0, 5, 1.0, PF_Precision_HUNDREDTHS, 0, sup, DISK_IN_DURATION);
+    PF_ADD_FLOAT_SLIDERX("Footage used (s)", 0, 3600, 0, 30, 5.0, PF_Precision_HUNDREDTHS, 0, sup, DISK_IN_SOURCE);
     AEFX_CLR_STRUCT(def);
+    def.flags = sup;
     PF_ADD_POPUP("Ease", ATR_EASE_COUNT, 1, ATR_EASE_CHOICES, DISK_IN_EASE);
+    ERR(AddBezierSliders(in_data, DISK_IN_X1, DISK_IN_Y1, DISK_IN_X2, DISK_IN_Y2));
     AEFX_CLR_STRUCT(def);
     PF_END_TOPIC(DISK_IN_TOPIC_END);
 
     AEFX_CLR_STRUCT(def);
     PF_ADD_TOPIC("Ramp out", DISK_OUT_TOPIC);
-    PF_ADD_FLOAT_SLIDERX("Duration (s)", 0, 60, 0, 5, 1.0, PF_Precision_HUNDREDTHS, 0, 0, DISK_OUT_DURATION);
-    PF_ADD_FLOAT_SLIDERX("Footage used (s)", 0, 3600, 0, 30, 5.0, PF_Precision_HUNDREDTHS, 0, 0, DISK_OUT_SOURCE);
     AEFX_CLR_STRUCT(def);
+    PF_ADD_CHECKBOXX("Same as ramp in", FALSE, sup, DISK_OUT_LINK);
+    PF_ADD_FLOAT_SLIDERX("Duration (s)", 0, 60, 0, 5, 1.0, PF_Precision_HUNDREDTHS, 0, sup, DISK_OUT_DURATION);
+    PF_ADD_FLOAT_SLIDERX("Footage used (s)", 0, 3600, 0, 30, 5.0, PF_Precision_HUNDREDTHS, 0, sup, DISK_OUT_SOURCE);
+    AEFX_CLR_STRUCT(def);
+    def.flags = sup;
     PF_ADD_POPUP("Ease", ATR_EASE_COUNT, 1, ATR_EASE_CHOICES, DISK_OUT_EASE);
+    ERR(AddBezierSliders(in_data, DISK_OUT_X1, DISK_OUT_Y1, DISK_OUT_X2, DISK_OUT_Y2));
     AEFX_CLR_STRUCT(def);
     PF_END_TOPIC(DISK_OUT_TOPIC_END);
 
     AEFX_CLR_STRUCT(def);
+    def.flags = sup;
     PF_ADD_POPUP("Anchor", ATR_ANCHOR_COUNT, 1, ATR_ANCHOR_CHOICES, DISK_ANCHOR);
 
     AEFX_CLR_STRUCT(def);
@@ -201,14 +155,118 @@ PF_Err ParamsSetup(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef*[], PF_
     AEFX_CLR_STRUCT(def);
     PF_END_TOPIC(DISK_BLUR_TOPIC_END);
 
+    AEFX_CLR_STRUCT(def);
+    PF_ADD_CHECKBOXX("Real-time marker", TRUE, sup, DISK_MARKER);
+
     out_data->num_params = ATR_NUM_PARAMS;
+
+    if (!err)
+    {
+        PF_CustomUIInfo ci;
+        AEFX_CLR_STRUCT(ci);
+        ci.events = PF_CustomEFlag_EFFECT;
+        err = (*(in_data->inter.register_ui))(in_data->effect_ref, &ci);
+    }
     return err;
+}
+
+// Show the bezier sliders only for Custom eases; grey out ramp-out controls while linked.
+PF_Err UpdateParamsUI(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* params[])
+{
+    PF_Err err = PF_Err_NONE;
+    if (in_data->appl_id == kAppID_Premiere || !g_pluginId)
+        return err;
+
+    const bool linked = params[ATR_OUT_LINK]->u.bd.value != 0;
+    const bool inCustom = params[ATR_IN_EASE]->u.pd.value == ATR_EASE_CUSTOM;
+    const bool outCustom = params[ATR_OUT_EASE]->u.pd.value == ATR_EASE_CUSTOM;
+
+    ATR_STEP("update_params_ui:disable");
+    AEFX_SuiteScoper<PF_ParamUtilsSuite3> paramUtils(in_data, kPFParamUtilsSuite, kPFParamUtilsSuiteVersion3, out_data);
+    const int outParams[] = {ATR_OUT_DURATION, ATR_OUT_SOURCE, ATR_OUT_EASE,
+                             ATR_OUT_X1, ATR_OUT_Y1, ATR_OUT_X2, ATR_OUT_Y2};
+    for (int idx : outParams)
+    {
+        const bool isDisabled = (params[idx]->ui_flags & PF_PUI_DISABLED) != 0;
+        if (isDisabled != linked)
+        {
+            PF_ParamDef copy = *params[idx];
+            if (linked)
+                copy.ui_flags |= PF_PUI_DISABLED;
+            else
+                copy.ui_flags &= ~PF_PUI_DISABLED;
+            ERR(paramUtils->PF_UpdateParamUI(in_data->effect_ref, idx, &copy));
+        }
+    }
+
+    // Visibility goes through dynamic stream flags in AE.
+    ATR_STEP("update_params_ui:visibility");
+    AEFX_SuiteScoper<AEGP_PFInterfaceSuite1> pfi(in_data, kAEGPPFInterfaceSuite, kAEGPPFInterfaceSuiteVersion1, out_data);
+    AEFX_SuiteScoper<AEGP_StreamSuite7> streams(in_data, kAEGPStreamSuite, kAEGPStreamSuiteVersion7, out_data);
+    AEFX_SuiteScoper<AEGP_DynamicStreamSuite4> dyn(
+        in_data, kAEGPDynamicStreamSuite, kAEGPDynamicStreamSuiteVersion4, out_data);
+    AEGP_EffectRefH effH = nullptr;
+    if (pfi->AEGP_GetNewEffectForEffect(g_pluginId, in_data->effect_ref, &effH) != A_Err_NONE || !effH)
+        return err;
+    struct Vis
+    {
+        int idx;
+        bool hide;
+    };
+    const Vis vis[] = {{ATR_IN_X1, !inCustom},  {ATR_IN_Y1, !inCustom},  {ATR_IN_X2, !inCustom},
+                       {ATR_IN_Y2, !inCustom},  {ATR_OUT_X1, !outCustom}, {ATR_OUT_Y1, !outCustom},
+                       {ATR_OUT_X2, !outCustom}, {ATR_OUT_Y2, !outCustom}};
+    for (const Vis& v : vis)
+    {
+        AEGP_StreamRefH streamH = nullptr;
+        if (streams->AEGP_GetNewEffectStreamByIndex(g_pluginId, effH, v.idx, &streamH) != A_Err_NONE || !streamH)
+            continue;
+        AEGP_DynStreamFlags flags = 0;
+        dyn->AEGP_GetDynamicStreamFlags(streamH, &flags);
+        const bool hidden = (flags & AEGP_DynStreamFlag_HIDDEN) != 0;
+        if (hidden != v.hide)
+            dyn->AEGP_SetDynamicStreamFlag(streamH, AEGP_DynStreamFlag_HIDDEN, FALSE, v.hide);
+        streams->AEGP_DisposeStream(streamH);
+    }
+    AEFX_SuiteScoper<AEGP_EffectSuite5> fx(in_data, kAEGPEffectSuite, kAEGPEffectSuiteVersion5, out_data);
+    fx->AEGP_DisposeEffect(effH);
+    return err;
+}
+
+// A supervised param changed: update the marker inside the same undo step and redraw the graph.
+PF_Err UserChangedParam(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* params[])
+{
+    PF_Err err = PF_Err_NONE;
+    out_data->out_flags |= PF_OutFlag_REFRESH_UI;
+    if (in_data->appl_id == kAppID_Premiere || !g_pluginId)
+        return err;
+
+    AEFX_SuiteScoper<AEGP_PFInterfaceSuite1> pfi(in_data, kAEGPPFInterfaceSuite, kAEGPPFInterfaceSuiteVersion1, out_data);
+    AEGP_LayerH layerH = nullptr;
+    if (pfi->AEGP_GetEffectLayer(in_data->effect_ref, &layerH) != A_Err_NONE || !layerH)
+        return err;
+    LayerTiming timing;
+    if (ReadLayerTimingAEGP(in_data->pica_basicP, layerH, timing) != A_Err_NONE)
+        return err;
+    Settings s;
+    ReadSettingsFromParams(params, s);
+    const double frame = in_data->time_scale ? double(in_data->time_step) / double(in_data->time_scale) : 1.0 / 25.0;
+    const atr::Solved solved = BuildRamp(s, timing, frame);
+    ATR_STEP("user_changed_param:sync_marker");
+    SyncMarker(layerH, ComputeMarkerZone(s, solved), frame);
+    return err;
+}
+
+PF_Err HandleEvent(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* params[], PF_EventExtra* extra)
+{
+    if (extra->e_type == PF_Event_DRAW)
+        return DrawSpeedGraph(in_data, out_data, params, extra);
+    return PF_Err_NONE;
 }
 
 // Requested source times are passed to AE on a finer grid than the comp's, so shutter samples can
 // land between frames (precomps render sub-frame content; footage picks the nearest frame).
 constexpr double kMinTimeScale = 6000.0;
-constexpr double kMaxSourceSeconds = 3.0e5; // keeps time values inside A_long at the fine scale
 
 PF_Err PreRender(PF_InData* in_data, PF_OutData* out_data, PF_PreRenderExtra* extra)
 {
@@ -219,22 +277,19 @@ PF_Err PreRender(PF_InData* in_data, PF_OutData* out_data, PF_PreRenderExtra* ex
     if (!err && extra->cb->GuidMixInPtr)
         ERR(extra->cb->GuidMixInPtr(in_data->effect_ref, sizeof(timing), &timing));
 
-    atr::RampInput ramp;
-    atr::MotionBlur blur;
-    ERR(ReadParams(in_data, ramp, blur));
+    Settings settings;
+    ERR(ReadSettingsPF(in_data, settings));
     if (err)
         return err;
 
     const double scale = double(in_data->time_scale);
     const double frame = scale > 0.0 ? double(in_data->time_step) / scale : 0.0;
-    ramp.inPoint = timing.inPoint;
-    ramp.outPoint = timing.outPoint;
-    ramp.sourceMin = 0.0;
-    ramp.sourceMax = timing.sourceDur > 0.0 ? std::max(0.0, timing.sourceDur - frame) : kMaxSourceSeconds;
+    const atr::Solved solved = BuildRamp(settings, timing, frame);
 
     const double t = double(in_data->current_time) / scale;
     double sourceTimes[atr::kMaxShutterSamples];
-    const int n = atr::ShutterSamples(atr::Solve(ramp), t, frame, blur, sourceTimes);
+    const int n = atr::ShutterSamples(solved, t, frame, settings.blur, sourceTimes);
+
 
     const A_long k = std::max<A_long>(1, static_cast<A_long>(std::ceil(kMinTimeScale / scale)));
     const A_u_long fineScale = in_data->time_scale * static_cast<A_u_long>(k);
@@ -424,17 +479,24 @@ extern "C" DllExport PF_Err PluginDataEntryFunction2(PF_PluginDataPtr inPtr,
     return result;
 }
 
-PF_Err EffectMain(
+static PF_Err EffectMainImpl(
     PF_Cmd cmd, PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* params[], PF_LayerDef* output, void* extra)
 {
     PF_Err err = PF_Err_NONE;
     try
     {
+        ATR_STEP(cmd == PF_Cmd_SMART_PRE_RENDER ? "prerender" : cmd == PF_Cmd_SMART_RENDER ? "render"
+                 : cmd == PF_Cmd_EVENT ? "event" : cmd == PF_Cmd_UPDATE_PARAMS_UI ? "update_params_ui"
+                 : cmd == PF_Cmd_USER_CHANGED_PARAM ? "user_changed_param" : cmd == PF_Cmd_GLOBAL_SETUP ? "global_setup"
+                 : cmd == PF_Cmd_PARAMS_SETUP ? "params_setup" : "other_cmd");
         switch (cmd)
         {
         case PF_Cmd_ABOUT: err = About(in_data, out_data, params, output); break;
         case PF_Cmd_GLOBAL_SETUP: err = GlobalSetup(in_data, out_data, params, output); break;
         case PF_Cmd_PARAMS_SETUP: err = ParamsSetup(in_data, out_data, params, output); break;
+        case PF_Cmd_UPDATE_PARAMS_UI: err = UpdateParamsUI(in_data, out_data, params); break;
+        case PF_Cmd_USER_CHANGED_PARAM: err = UserChangedParam(in_data, out_data, params); break;
+        case PF_Cmd_EVENT: err = HandleEvent(in_data, out_data, params, static_cast<PF_EventExtra*>(extra)); break;
         case PF_Cmd_SMART_PRE_RENDER: err = PreRender(in_data, out_data, static_cast<PF_PreRenderExtra*>(extra)); break;
         case PF_Cmd_SMART_RENDER: err = SmartRender(in_data, out_data, static_cast<PF_SmartRenderExtra*>(extra)); break;
         default: break;
@@ -449,4 +511,18 @@ PF_Err EffectMain(
         err = PF_Err_INTERNAL_STRUCT_DAMAGED;
     }
     return err;
+}
+
+// SEH wrapper: a crash inside the plug-in is logged (see Guard.h) and reported as an error to AE.
+PF_Err EffectMain(
+    PF_Cmd cmd, PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* params[], PF_LayerDef* output, void* extra)
+{
+    __try
+    {
+        return EffectMainImpl(cmd, in_data, out_data, params, output, extra);
+    }
+    __except (AtrCrashFilter(GetExceptionInformation(), "EffectMain"))
+    {
+        return PF_Err_INTERNAL_STRUCT_DAMAGED;
+    }
 }

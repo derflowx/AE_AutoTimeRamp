@@ -34,16 +34,16 @@ resource 'PiPL' (16000) {
 			PF_PLUG_IN_VERSION,
 			PF_PLUG_IN_SUBVERS
 		},
-		/* PF_VERSION(0,2,0,PF_Stage_DEVELOP,1) = (2 << 15) | 1 */
+		/* PF_VERSION(0,3,0,PF_Stage_DEVELOP,1) = (3 << 15) | 1 */
 		AE_Effect_Version {
-			65537
+			98305
 		},
 		AE_Effect_Info_Flags {
 			0
 		},
 		/* Must equal ATR_OUT_FLAGS / ATR_OUT_FLAGS2 in AutoTimeRamp.h */
 		AE_Effect_Global_OutFlags {
-			0x02000042
+			0x06008042
 		},
 		AE_Effect_Global_OutFlags_2 {
 			0x08221400

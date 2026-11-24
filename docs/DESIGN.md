@@ -62,8 +62,28 @@ In and out have separate presets with a link checkbox.
   Revisit later, once the rest is done: footage at ~2–4× can show stepping (only 2–4 distinct frames
   averaged). Options are fractional sample weights to fade the blur in smoothly (cheap) or optional
   optical-flow in-betweens for footage (big).
-- Effect Controls custom UI: speed graph with zones, peak speeds, footage used, warnings.
-- One layer duration marker spanning the real-time zone, kept updated by the effect (display only).
+- Effect Controls custom UI (v0.3): speed graph with zones, peak speeds, footage used, warnings.
+  Drawn with Drawbot on a colour param with `PF_PUI_CONTROL` (its value is unused).
+- Real-time marker (v0.3, display only): one layer duration marker spanning the real-time zone,
+  identified by its comment. Synced in `USER_CHANGED_PARAM` (inside the param change's undo step) and
+  by an idle hook that scans the active comp's layers with the effect and re-syncs after trims (its own
+  undo step). The hook only acts when a layer's timing or settings changed since it last looked, so an
+  undone marker update isn't re-applied in a loop. On first sight (project open) it only creates a
+  missing marker; it doesn't rewrite an existing one.
+- Custom bezier (v0.3): CSS-style cubic bezier for the ease, tabulated (512 points) with an exact
+  piecewise integral so the footage budget stays exact; clamped to [0,1] so speed never goes negative.
+- Ramp out "Same as ramp in" (v0.3): mirrors duration, footage and ease. Bezier sliders are hidden
+  unless the ease is Custom (dynamic stream flags); linked ramp-out controls are greyed out.
+- Params are matched by disk ID, so new params were inserted into their groups. Saved v0.1/v0.2
+  projects should load with the new params at their defaults (not yet verified with a saved project).
+
+## Crash during v0.3 testing (2026-11-24)
+
+AE crashed once, about a second after the marker test applied the effect, and once more 8 s into a
+launch whose project never contained the effect. The crash report was uploaded and deleted, so the
+cause is unknown. Repeated `AfterFX -r` probes had started AE several times in a row around then. Since
+then the plug-in has a crash guard (Guard.h) and three full test runs plus a manual demo ran clean
+with an empty crash log. Watch `%TEMP%\AutoTimeRamp_crash.log` if AE crashes again.
 
 ## Technical risks (prototype first)
 

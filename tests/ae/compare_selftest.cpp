@@ -94,6 +94,15 @@ int main(int argc, char** argv)
             ri.rampIn = {std::atof(f[4].c_str()), std::atof(f[5].c_str()), atr::Ease(std::atoi(f[6].c_str()) - 1)};
             ri.rampOut = {std::atof(f[7].c_str()), std::atof(f[8].c_str()), atr::Ease(std::atoi(f[9].c_str()) - 1)};
             ri.anchor = atr::Anchor(std::atoi(f[10].c_str()) - 1);
+            if (f.size() > 23) // link + in/out bezier (v0.3+)
+            {
+                ri.linkOut = std::atoi(f[15].c_str()) != 0;
+                for (int b = 0; b < 4; ++b)
+                {
+                    ri.rampIn.bezier[b] = std::atof(f[16 + b].c_str());
+                    ri.rampOut.bezier[b] = std::atof(f[20 + b].c_str());
+                }
+            }
             ri.sourceMin = 0.0;
             ri.sourceMax = kSrcDur - 1.0 / kFps;
             Case c;
