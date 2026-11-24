@@ -317,9 +317,16 @@ Sample Evaluate(const Solved& s, double t)
     return out;
 }
 
-int ShutterSamples(const Solved& s, double t, double frameDuration, const MotionBlur& mb, double* sourceTimes)
+int ShutterSamples(const Solved& s,
+                   double t,
+                   double frameDuration,
+                   const MotionBlur& mb,
+                   double* sourceTimes,
+                   double* timelineTimes)
 {
     sourceTimes[0] = Evaluate(s, t).source;
+    if (timelineTimes)
+        timelineTimes[0] = t;
     if (!mb.enabled || frameDuration <= 0.0 || mb.shutterAngle <= 0.0 || mb.maxSamples <= 1)
         return 1;
 
@@ -333,8 +340,66 @@ int ShutterSamples(const Solved& s, double t, double frameDuration, const Motion
     const int cap = std::min(mb.maxSamples, kMaxShutterSamples);
     const int n = std::min(cap, static_cast<int>(std::ceil(sweptFrames - 1e-6)));
     for (int i = 0; i < n; ++i)
-        sourceTimes[i] = Evaluate(s, a + open * (i + 0.5) / n).source;
+    {
+        const double ti = a + open * (i + 0.5) / n;
+        sourceTimes[i] = Evaluate(s, ti).source;
+        if (timelineTimes)
+            timelineTimes[i] = ti;
+    }
     return n;
+}
+
+bool TransformState::IsIdentity() const
+{
+    return std::fabs(scale - 1.0) < 1e-9 && std::fabs(rotation) < 1e-9 && std::fabs(dx) < 1e-9 &&
+           std::fabs(dy) < 1e-9 && std::fabs(opacity - 1.0) < 1e-9;
+}
+
+RampTransform EffectiveOutTransform(const RampTransform& in, const RampTransform& out, bool linked, OutDirection dir)
+{
+    if (!linked)
+        return out;
+    RampTransform r = in;
+    if (dir == OutDirection::Continue)
+    {
+        // Keep moving the same way through the cut: invert every motion. Opacity dips the same way.
+        r.scale = 10000.0 / std::max(1.0, in.scale);
+        r.rotation = -in.rotation;
+        r.posX = -in.posX;
+        r.posY = -in.posY;
+    }
+    return r;
+}
+
+namespace
+{
+TransformState Blend(const RampTransform& x, double w)
+{
+    TransformState st;
+    const double k = std::max(0.01, x.scale / 100.0);
+    st.scale = std::pow(k, w);
+    st.rotation = x.rotation * w;
+    st.dx = x.posX * w;
+    st.dy = x.posY * w;
+    st.opacity = 1.0 - (1.0 - std::min(1.0, std::max(0.0, x.opacity / 100.0))) * w;
+    return st;
+}
+} // namespace
+
+TransformState TransformAt(const Solved& s, const RampTransform& in, const RampTransform& outEffective, double t)
+{
+    const double rtStart = s.RealTimeStart(), rtEnd = s.RealTimeEnd();
+    if (s.rampIn.duration > 0.0 && t < rtStart)
+    {
+        const double u = Clamp01((t - s.inPoint) / s.rampIn.duration);
+        return Blend(in, 1.0 - RampEase(s.rampIn, u));
+    }
+    if (s.rampOut.duration > 0.0 && t > rtEnd)
+    {
+        const double u = Clamp01((s.outPoint - t) / s.rampOut.duration);
+        return Blend(outEffective, 1.0 - RampEase(s.rampOut, u));
+    }
+    return TransformState();
 }
 
 const char* EaseName(Ease ease)

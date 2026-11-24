@@ -12,6 +12,17 @@ struct Settings
     atr::RampInput ramp; // in/out points and source range are filled by BuildRamp()
     atr::MotionBlur blur;
     bool marker = true;
+
+    // Ramp transform (scale/rotation/position/opacity at each cut, linked to the ramp ease).
+    atr::RampTransform xfIn;
+    atr::RampTransform xfOut;         // as entered; use XfOutEffective() for rendering
+    atr::OutDirection direction = atr::OutDirection::Continue;
+    int edges = ATR_EDGE_MIRROR;
+
+    atr::RampTransform XfOutEffective() const
+    {
+        return atr::EffectiveOutTransform(xfIn, xfOut, ramp.linkOut, direction);
+    }
 };
 
 // Layer timing that affects the render but is not an effect param (mixed into the cache GUID).

@@ -26,6 +26,60 @@ std::vector<std::string> Split(const std::string& s)
     return out;
 }
 
+// Ramp-transform case: a static horizontal gradient (value = x / W) seen through the transform.
+struct XfCase
+{
+    std::string name;
+    atr::Solved solved;
+    atr::RampTransform in, outEff;
+    int edges = 1; // 1 mirror, 2 transparent, 3 repeat
+    double W = 200, H = 100;
+    int points = 0, alphaOk = 0, valueOkU = 0, valueOkP = 0, valueChecked = 0;
+    double maxAlphaErr = 0;
+};
+
+// Expected (value, alpha) at layer pixel position (px, py): inverse of the renderer's transform.
+void ExpectXf(const XfCase& c, double t, double px, double py, double& value, double& alpha, bool& nearEdge)
+{
+    const atr::TransformState st = atr::TransformAt(c.solved, c.in, c.outEff, t);
+    const double th = st.rotation * 3.14159265358979323846 / 180.0;
+    const double s = std::max(1e-4, st.scale);
+    const double a = std::cos(th) / s, b = std::sin(th) / s, cc = -std::sin(th) / s, d = std::cos(th) / s;
+    const double pvx = c.W / 2, pvy = c.H / 2;
+    const double ux = px - pvx - st.dx, uy = py - pvy - st.dy;
+    double qx = pvx + a * ux + b * uy;
+    double qy = pvy + cc * ux + d * uy;
+    nearEdge = false;
+    auto wrap = [&](double& v, double size) {
+        // Edges are anti-aliased: bilinear sampling + sampleImage's averaging blend over ~2 output px,
+        // i.e. ~2/scale source px.
+        const double m = 1.0 + 1.5 / s;
+        if (std::fabs(v) < m || std::fabs(v - size) < m)
+            nearEdge = true;
+        if (v >= 0 && v <= size)
+            return true;
+        if (c.edges == 2)
+            return false;
+        if (c.edges == 3)
+        {
+            v = std::fmod(v, size);
+            if (v < 0)
+                v += size;
+            if (v < m || v > size - m)
+                nearEdge = true;
+            return true;
+        }
+        double m2 = std::fmod(v, 2 * size);
+        if (m2 < 0)
+            m2 += 2 * size;
+        v = m2 <= size ? m2 : 2 * size - m2;
+        return true;
+    };
+    const bool inside = wrap(qx, c.W) && wrap(qy, c.H);
+    alpha = inside ? st.opacity : 0.0;
+    value = qx / c.W;
+}
+
 struct Case
 {
     std::string name;
@@ -61,6 +115,7 @@ int main(int argc, char** argv)
     }
 
     std::vector<Case> cases;
+    std::vector<XfCase> xfCases;
     std::string line;
     bool failed = false;
     while (std::getline(in, line))
@@ -68,6 +123,61 @@ int main(int argc, char** argv)
         if (line.empty())
             continue;
         const auto f = Split(line);
+        if (f[0] == "#xfcase" && f.size() >= 25)
+        {
+            // name, in, out, inDur, inSrc, inEase, outDur, outSrc, outEase, link, dir, edges, W, H, xin[5], xout[5]
+            XfCase c;
+            c.name = f[1];
+            atr::RampInput ri;
+            ri.inPoint = std::atof(f[2].c_str());
+            ri.outPoint = std::atof(f[3].c_str());
+            ri.rampIn = {std::atof(f[4].c_str()), std::atof(f[5].c_str()), atr::Ease(std::atoi(f[6].c_str()) - 1)};
+            ri.rampOut = {std::atof(f[7].c_str()), std::atof(f[8].c_str()), atr::Ease(std::atoi(f[9].c_str()) - 1)};
+            ri.linkOut = std::atoi(f[10].c_str()) != 0;
+            ri.sourceMin = -1.0e9;
+            c.solved = atr::Solve(ri);
+            const atr::OutDirection dir =
+                std::atoi(f[11].c_str()) == 2 ? atr::OutDirection::Mirror : atr::OutDirection::Continue;
+            c.edges = std::atoi(f[12].c_str());
+            c.W = std::atof(f[13].c_str());
+            c.H = std::atof(f[14].c_str());
+            atr::RampTransform xin, xout;
+            double* vi[5] = {&xin.scale, &xin.rotation, &xin.posX, &xin.posY, &xin.opacity};
+            double* vo[5] = {&xout.scale, &xout.rotation, &xout.posX, &xout.posY, &xout.opacity};
+            for (int k = 0; k < 5; ++k)
+            {
+                *vi[k] = std::atof(f[15 + k].c_str());
+                *vo[k] = std::atof(f[20 + k].c_str());
+            }
+            c.in = xin;
+            c.outEff = atr::EffectiveOutTransform(xin, xout, ri.linkOut, dir);
+            xfCases.push_back(c);
+            continue;
+        }
+        if (f[0] == "xf" && f.size() >= 7 && !xfCases.empty())
+        {
+            XfCase& c = xfCases.back();
+            const double t = std::atof(f[2].c_str()), px = std::atof(f[3].c_str()), py = std::atof(f[4].c_str());
+            const double gotV = std::atof(f[5].c_str()), gotA = std::atof(f[6].c_str());
+            double wantV = 0, wantA = 0;
+            bool nearEdge = false;
+            ExpectXf(c, t, px, py, wantV, wantA, nearEdge);
+            ++c.points;
+            const double aErr = std::fabs(gotA - wantA);
+            if (!nearEdge)
+                c.maxAlphaErr = std::max(c.maxAlphaErr, aErr);
+            if (aErr < 0.02 || nearEdge)
+                ++c.alphaOk;
+            if (wantA > 0.1 && !nearEdge)
+            {
+                ++c.valueChecked;
+                if (std::fabs(gotV - wantV) < 0.02)
+                    ++c.valueOkU; // sampleImage returns straight colour
+                if (std::fabs(gotV - wantV * wantA) < 0.02)
+                    ++c.valueOkP; // ... or premultiplied
+            }
+            continue;
+        }
         if (f[0] == "#param")
         {
             std::printf("param %s: %s (%s)\n", f[1].c_str(), f[2].c_str(), f[3].c_str());
@@ -166,6 +276,20 @@ int main(int argc, char** argv)
         failed = failed || !ok;
         std::printf("%-16s %4d %6d %13.3f %8.3f %10.4f %8d %s\n", c.name.c_str(), c.bpc, c.frames, c.maxErrFrames,
                     c.worstT, c.maxGreenErr, c.blurVisibleFrames, ok ? "PASS" : "FAIL");
+    }
+    if (!xfCases.empty())
+    {
+        std::printf("\n%-24s %7s %9s %12s %14s %s\n", "transform case", "points", "alpha ok", "max a err",
+                    "position ok", "result");
+        for (const XfCase& c : xfCases)
+        {
+            const int valueOk = std::max(c.valueOkU, c.valueOkP);
+            const bool ok = c.points > 0 && c.alphaOk == c.points && c.valueChecked > 0 &&
+                            valueOk >= c.valueChecked * 97 / 100;
+            failed = failed || !ok;
+            std::printf("%-24s %7d %9d %12.4f %8d/%-5d %s\n", c.name.c_str(), c.points, c.alphaOk, c.maxAlphaErr,
+                        valueOk, c.valueChecked, ok ? "PASS" : "FAIL");
+        }
     }
     return failed ? 1 : 0;
 }

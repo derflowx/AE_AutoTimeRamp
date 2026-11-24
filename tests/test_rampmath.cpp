@@ -233,6 +233,68 @@ static void TestLink()
         CHECK_NEAR(Evaluate(s, t).source + Evaluate(s, 10.0 - t).source, 10.0, 1e-9, "linked mirror");
 }
 
+static void TestTransform()
+{
+    RampInput in;
+    in.inPoint = 0.0;
+    in.outPoint = 8.0;
+    in.rampIn = {1.0, 5.0, Ease::Snap};
+    in.rampOut = {1.0, 5.0, Ease::Snap};
+    in.sourceMin = -100.0; // ramp in reaches before 0 s; don't clamp
+    const Solved s = Solve(in);
+
+    RampTransform tin;
+    tin.scale = 130.0;
+    tin.rotation = 20.0;
+    tin.posX = 400.0;
+    tin.posY = -50.0;
+    tin.opacity = 0.0;
+    RampTransform tout; // ignored when linked
+
+    // At the cut: the full transform. In real-time: identity. At the boundary: identity (continuous).
+    const RampTransform outCont = EffectiveOutTransform(tin, tout, true, OutDirection::Continue);
+    TransformState a = TransformAt(s, tin, outCont, 0.0);
+    CHECK_NEAR(a.scale, 1.3, 1e-12, "scale at cut");
+    CHECK_NEAR(a.rotation, 20.0, 1e-12, "rotation at cut");
+    CHECK_NEAR(a.dx, 400.0, 1e-12, "x at cut");
+    CHECK_NEAR(a.opacity, 0.0, 1e-12, "opacity at cut");
+    CHECK(TransformAt(s, tin, outCont, 4.0).IsIdentity(), "identity in real-time");
+    CHECK(TransformAt(s, tin, outCont, 1.0).IsIdentity(), "identity at ramp-in boundary");
+    const TransformState justBefore = TransformAt(s, tin, outCont, 1.0 - 1e-6);
+    CHECK_NEAR(justBefore.dx, 0.0, 1e-6, "continuous into real-time");
+
+    // Linked + continue: ramp out moves the other way at the cut (keeps going through the cut).
+    const TransformState z = TransformAt(s, tin, outCont, 8.0);
+    CHECK_NEAR(z.scale, 1.0 / 1.3, 1e-12, "continue: inverse scale");
+    CHECK_NEAR(z.rotation, -20.0, 1e-12, "continue: opposite rotation");
+    CHECK_NEAR(z.dx, -400.0, 1e-12, "continue: opposite position");
+    CHECK_NEAR(z.opacity, 0.0, 1e-12, "continue: opacity dips the same way");
+
+    // Linked + mirror: same as ramp in.
+    const RampTransform outMirror = EffectiveOutTransform(tin, tout, true, OutDirection::Mirror);
+    CHECK_NEAR(TransformAt(s, tin, outMirror, 8.0).dx, 400.0, 1e-12, "mirror: same position");
+
+    // Not linked: ramp out uses its own values.
+    tout.rotation = 90.0;
+    CHECK_NEAR(TransformAt(s, tin, EffectiveOutTransform(tin, tout, false, OutDirection::Continue), 8.0).rotation,
+               90.0, 1e-12, "unlinked out uses own values");
+
+    // The weight follows the speed: (speed - 1) / (peak - 1) == 1 - e(u) == w.
+    for (double t = 0.05; t < 1.0; t += 0.1)
+    {
+        const double w = (Evaluate(s, t).speed - 1.0) / (s.rampIn.peak - 1.0);
+        CHECK_NEAR(TransformAt(s, tin, outCont, t).rotation, 20.0 * w, 1e-9, "transform linked to speed");
+    }
+
+    // Shutter samples report their timeline times.
+    double st[kMaxShutterSamples], tt[kMaxShutterSamples];
+    MotionBlur mb;
+    const int n = ShutterSamples(s, 0.02, 0.04, mb, st, tt);
+    CHECK(n > 1, "blurred at the cut");
+    for (int i = 0; i < n; ++i)
+        CHECK_NEAR(Evaluate(s, tt[i]).source, st[i], 1e-12, "timeline time matches source sample");
+}
+
 static void TestShutter()
 {
     RampInput in;
@@ -275,6 +337,7 @@ int main()
 {
     TestBezier();
     TestLink();
+    TestTransform();
     TestShutter();
     TestIntegrals();
     TestPeakSolve();

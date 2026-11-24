@@ -77,6 +77,20 @@ In and out have separate presets with a link checkbox.
 - Params are matched by disk ID, so new params were inserted into their groups. Saved v0.1/v0.2
   projects should load with the new params at their defaults (not yet verified with a saved project).
 
+## Ramp transform (v0.4)
+
+Scale/rotation/position/opacity at each cut with weight `w = 1 - e(u)` (the ramp's ease; equals
+`(speed - 1)/(peak - 1)`), scale in log space. A linked ramp out either continues through the cut
+(inverse scale, negated rotation/position, same opacity dip) or mirrors ramp in. The transform is
+evaluated per shutter sample at its timeline time, so the transform motion is blurred too. Rendering
+requests the whole layer, maps each output pixel through the sample's inverse affine (pivot = layer
+centre, square-pixel space via the pixel aspect ratio), samples bilinearly with Mirror/Transparent/
+Repeat edges, multiplies by opacity and averages.
+
+Lesson: the effect must declare `PF_OutFlag_NON_PARAM_VARY`. Its output depends on the current time,
+not only on params and input, and without the flag AE rendered a static input (still, solid, static
+precomp) once and reused that frame for every time.
+
 ## Crash during v0.3 testing (2026-11-24)
 
 AE crashed once, about a second after the marker test applied the effect, and once more 8 s into a

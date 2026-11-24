@@ -7,6 +7,7 @@
 param(
     [switch]$Tests,
     [switch]$AETest,
+    [switch]$RestartAE, # quit AE (only if it holds just self-test items) and relaunch; combine with -AETest
     [string]$AfterFX = 'C:\Program Files\Adobe\Adobe After Effects 2026\Support Files\AfterFX.exe',
     [ValidateSet('Release', 'Debug')][string]$Config = 'Release'
 )
@@ -39,6 +40,42 @@ if ($Tests) {
     & "$out\test_rampmath.exe"
     if ($LASTEXITCODE -ne 0) { throw 'Tests failed.' }
     return
+}
+
+if ($RestartAE) {
+    # Quit AE only if it has an unsaved project holding nothing but self-test items, then relaunch.
+    $tmp = Join-Path $env:TEMP 'atr_aetest'
+    New-Item -ItemType Directory -Force $tmp | Out-Null
+    $res = Join-Path $tmp 'quit_result.txt'
+    Remove-Item $res -ErrorAction SilentlyContinue
+    if (Get-Process AfterFX -ErrorAction SilentlyContinue) {
+        $quit = @"
+(function(){
+  var f = new File("$($res.Replace('\','/'))"); f.open("w");
+  var ok = !app.project.file;
+  for (var i = 1; i <= app.project.numItems; i++) {
+    var n = app.project.item(i).name;
+    if (!(n.indexOf("ATR_") === 0 || n === "Solids" || n === "bg")) ok = false;
+  }
+  f.writeln(ok ? "quitting" : "refused: project has other items or is saved"); f.close();
+  if (ok) { app.project.close(CloseOptions.DO_NOT_SAVE_CHANGES); app.quit(); }
+})();
+"@
+        Set-Content (Join-Path $tmp 'quit.jsx') $quit -Encoding ascii
+        & $AfterFX -r (Join-Path $tmp 'quit.jsx')
+        $deadline = (Get-Date).AddSeconds(30)
+        while (-not (Test-Path $res) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 300 }
+        $msg = Get-Content $res -ErrorAction SilentlyContinue
+        if ($msg -ne 'quitting') { throw "Not restarting AE: $msg" }
+        $deadline = (Get-Date).AddMinutes(2)
+        while ((Get-Process AfterFX -ErrorAction SilentlyContinue) -and (Get-Date) -lt $deadline) { Start-Sleep 1 }
+    }
+    Start-Process $AfterFX
+    $deadline = (Get-Date).AddMinutes(3)
+    do { Start-Sleep 3 } until ((Get-Process AfterFX -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle -like 'Adobe After Effects*' }) -or (Get-Date) -gt $deadline)
+    Start-Sleep 15 # let startup finish before any script is sent
+    Write-Host 'AE restarted.'
+    if (-not $AETest) { return }
 }
 
 if ($AETest) {

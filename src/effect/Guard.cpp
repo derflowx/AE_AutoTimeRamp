@@ -8,6 +8,33 @@
 
 thread_local const char* g_atrStep = "none";
 
+    #include <cstdarg>
+    #include <mutex>
+
+void AtrDebugLog(const char* fmt, ...)
+{
+    char dir[MAX_PATH] = {};
+    const DWORD n = GetTempPathA(MAX_PATH, dir);
+    if (n == 0 || n > MAX_PATH - 40)
+        return;
+    char flag[MAX_PATH], path[MAX_PATH];
+    sprintf_s(flag, "%sAutoTimeRamp_debug.flag", dir);
+    if (GetFileAttributesA(flag) == INVALID_FILE_ATTRIBUTES)
+        return;
+    sprintf_s(path, "%sAutoTimeRamp_debug.log", dir);
+    static std::mutex m;
+    std::lock_guard<std::mutex> lock(m);
+    FILE* f = nullptr;
+    if (fopen_s(&f, path, "a") != 0 || !f)
+        return;
+    va_list args;
+    va_start(args, fmt);
+    std::vfprintf(f, fmt, args);
+    va_end(args);
+    std::fputc('\n', f);
+    std::fclose(f);
+}
+
 int AtrCrashFilter(EXCEPTION_POINTERS* ep, const char* where)
 {
     HMODULE self = nullptr;
@@ -42,4 +69,5 @@ int AtrCrashFilter(EXCEPTION_POINTERS* ep, const char* where)
 }
 #else
 thread_local const char* g_atrStep = "none";
+void AtrDebugLog(const char*, ...) {}
 #endif

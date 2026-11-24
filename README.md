@@ -4,8 +4,9 @@ After Effects effect (native C++, AE SDK) that speed-ramps a layer into and out 
 in/out points. No Time Remap, no keyframes: everything is derived from the layer's trimmed length.
 Design: [docs/DESIGN.md](docs/DESIGN.md).
 
-Status: **v0.3**: ramps, ease presets incl. Custom bezier, linked ramp out, anchors, speed-based
-motion blur, a speed graph in Effect Controls, and a real-time marker on the layer.
+Status: **v0.4**: ramps, ease presets incl. Custom bezier, linked ramp out, anchors, speed-based
+motion blur, ramp-linked transform (scale/rotation/position/opacity) with mirror edges, a speed
+graph in Effect Controls, and a real-time marker on the layer.
 
 ## Layout
 
@@ -62,12 +63,23 @@ The effect appears under **Effect > Time > Auto Time Ramp**.
     *Custom* shows four bezier sliders (x1, y1, x2, y2, like CSS `cubic-bezier`); the curve is
     clamped to 0–1 so playback never runs backwards.
   - *Same as ramp in* (ramp out): mirrors the ramp-in settings; the ramp-out controls grey out.
+  - *Motion direction* (ramp out, while linked): **Continue through the cut** (default) inverts the
+    ramp-in motion, so the image keeps moving the same way, as in whip-pan or zoom transitions.
+    **Mirror ramp in** plays it backwards.
+  - *Transform at cut*: Scale (%), Rotation (deg), Position X/Y (px) and Opacity (%) at the cut.
+    They ease back to 100% / 0 / 0 / 100% exactly as the speed settles: the weight is the ramp's own
+    ease, `1 - e(u)`, the same curve as `(speed - 1) / (peak - 1)`. The transform is applied per
+    motion-blur sample, so fast zooms, spins and slides blur along their motion.
+
+  ![Transform at the cut: zoom, rotation and slide with mirror edges and motion blur](docs/transform-at-cut.jpg)
 - **Anchor**
   - *Sync*: the real-time part plays at its natural time. Pick the content by slip-editing
     (Alt-drag the layer content). The ramps use footage before and after it.
   - *Head*: starts on the in-point frame.
   - *Tail*: ends on the out-point frame.
 
+- **Transform edges**: what fills the frame when the transform pulls the image's edges in:
+  **Mirror** (default, seamless, like transition packs), **Transparent**, or **Repeat**.
 - **Motion blur**
   - *Enable*: on by default.
   - *Shutter angle*: 180° = shutter open for half a frame, centred on the frame. Up to 720°.
@@ -86,6 +98,9 @@ The effect appears under **Effect > Time > Auto Time Ramp**.
 
 Real-time length = layer length − ramp in − ramp out. If the ramps don't fit, both shrink proportionally.
 
+Render debug log: create `%TEMP%\AutoTimeRamp_debug.flag` and every PreRender/SmartRender appends its
+rectangles to `%TEMP%\AutoTimeRamp_debug.log`; delete the flag to stop.
+
 A crash guard wraps every entry point AE calls: a fault inside the plug-in is written to
 `%TEMP%\AutoTimeRamp_crash.log` (step + code offset; look it up in `build\Release\AutoTimeRamp.map`) and
 returned to AE as an error instead of crashing it.
@@ -94,7 +109,8 @@ Rebuilding while AE is open works: `build.ps1` moves the locked `.aex` aside. Re
 
 ## Automated AE self-test
 
-With After Effects 2026 running on an **empty project** (the script refuses to start AE itself) (Preferences > Scripting & Expressions >
+With After Effects 2026 running on an **empty project** (the script refuses to start AE itself;
+`.uild.ps1 -RestartAE -AETest` restarts AE first if it holds only self-test items) (Preferences > Scripting & Expressions >
 *Allow Scripts to Write Files and Access Network* enabled):
 
 ```powershell
@@ -106,7 +122,8 @@ own time, applies Auto Time Ramp, and reads the post-effect pixel back on every 
 `sampleImage()`. [tests/ae/compare_selftest.cpp](tests/ae/compare_selftest.cpp) then checks every frame
 against `RampMath`. It covers sync/head/tail anchors, in/out trims, Settle/Circ/Expo/Whip eases,
 source clamping, Custom bezier, linked ramp out, motion blur (shutter angle and sample cap), and
-32/16/8 bpc. [tests/ae/marker_test.jsx](tests/ae/marker_test.jsx) then checks the real-time marker in
+32/16/8 bpc. Ramp-transform cases view a horizontal gradient through scale/rotation/position/opacity
+with each edge mode and check every sampled point against the inverse transform. [tests/ae/marker_test.jsx](tests/ae/marker_test.jsx) then checks the real-time marker in
 stages: created on apply, updated on param change, followed after a trim, removed when switched off. The green channel is a
 sine of time, so averaging shows up in it: blur cases must match the predicted shutter average and
 visibly differ from an unblurred render. All test items are removed afterwards; the project is not saved.

@@ -46,6 +46,21 @@ void FromRaw(const RawValues& r, Settings& s)
     s.blur.shutterAngle = r.v[ATR_BLUR_SHUTTER];
     s.blur.maxSamples = std::max(1, std::min(static_cast<int>(r.v[ATR_BLUR_MAX_SAMPLES] + 0.5), atr::kMaxShutterSamples));
     s.marker = r.v[ATR_MARKER] != 0.0;
+
+    s.xfIn.scale = r.v[ATR_IN_XF_SCALE];
+    s.xfIn.rotation = r.v[ATR_IN_XF_ROTATION];
+    s.xfIn.posX = r.v[ATR_IN_XF_POS_X];
+    s.xfIn.posY = r.v[ATR_IN_XF_POS_Y];
+    s.xfIn.opacity = r.v[ATR_IN_XF_OPACITY];
+    s.xfOut.scale = r.v[ATR_OUT_XF_SCALE];
+    s.xfOut.rotation = r.v[ATR_OUT_XF_ROTATION];
+    s.xfOut.posX = r.v[ATR_OUT_XF_POS_X];
+    s.xfOut.posY = r.v[ATR_OUT_XF_POS_Y];
+    s.xfOut.opacity = r.v[ATR_OUT_XF_OPACITY];
+    s.direction = static_cast<int>(r.v[ATR_OUT_DIRECTION] + 0.5) == 2 ? atr::OutDirection::Mirror
+                                                                       : atr::OutDirection::Continue;
+    const int edges = static_cast<int>(r.v[ATR_EDGES] + 0.5);
+    s.edges = (edges >= ATR_EDGE_MIRROR && edges <= ATR_EDGE_REPEAT) ? edges : ATR_EDGE_MIRROR;
 }
 
 bool IsValueParam(int i)
@@ -59,7 +74,11 @@ bool IsValueParam(int i)
     case ATR_OUT_TOPIC:
     case ATR_OUT_TOPIC_END:
     case ATR_BLUR_TOPIC:
-    case ATR_BLUR_TOPIC_END: return false;
+    case ATR_BLUR_TOPIC_END:
+    case ATR_IN_XF_TOPIC:
+    case ATR_IN_XF_TOPIC_END:
+    case ATR_OUT_XF_TOPIC:
+    case ATR_OUT_XF_TOPIC_END: return false;
     default: return true;
     }
 }

@@ -9,6 +9,10 @@
 extern thread_local const char* g_atrStep;
 #define ATR_STEP(s) (g_atrStep = (s))
 
+// Opt-in render debug log: active while %TEMP%\AutoTimeRamp_debug.flag exists; appends to
+// %TEMP%\AutoTimeRamp_debug.log. printf-style.
+void AtrDebugLog(const char* fmt, ...);
+
 #ifdef _WIN32
 struct _EXCEPTION_POINTERS;
 int AtrCrashFilter(struct _EXCEPTION_POINTERS* ep, const char* where);

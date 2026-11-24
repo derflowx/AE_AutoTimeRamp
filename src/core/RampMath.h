@@ -168,8 +168,50 @@ struct MotionBlur
 };
 
 // Fills `sourceTimes` (capacity kMaxShutterSamples) and returns the sample count (>= 1).
-// frameDuration is the comp frame duration in seconds.
-int ShutterSamples(const Solved& s, double t, double frameDuration, const MotionBlur& mb, double* sourceTimes);
+// frameDuration is the comp frame duration in seconds. `timelineTimes` (optional) receives the layer
+// time of each sample, for evaluating time-dependent things (e.g. the ramp transform) per sample.
+int ShutterSamples(const Solved& s,
+                   double t,
+                   double frameDuration,
+                   const MotionBlur& mb,
+                   double* sourceTimes,
+                   double* timelineTimes = nullptr);
+
+// ---- Ramp transform (scale / rotation / position / opacity) ------------------------------------
+//
+// Each ramp has a transform "at the cut" that eases back to identity exactly as the speed settles:
+// weight w(u) = 1 - e(u) with the ramp's own ease (1 at the cut, 0 where real-time starts).
+// Scale interpolates in log space (x1.3 -> x1 is the mirror of x1/1.3 -> x1).
+
+struct RampTransform
+{
+    double scale = 100.0;    // % at the cut
+    double rotation = 0.0;   // degrees at the cut
+    double posX = 0.0;       // px offset at the cut (layer pixels, full resolution)
+    double posY = 0.0;
+    double opacity = 100.0;  // % at the cut
+};
+
+enum class OutDirection : int
+{
+    Continue = 0, // linked ramp out keeps moving the same way through the cut (whip/zoom transitions)
+    Mirror,       // linked ramp out is the ramp in played backwards
+    Count
+};
+
+struct TransformState
+{
+    double scale = 1.0;    // factor
+    double rotation = 0.0; // degrees
+    double dx = 0.0, dy = 0.0;
+    double opacity = 1.0;  // 0..1
+    bool IsIdentity() const;
+};
+
+// Ramp-out transform actually used: the given one, or derived from ramp in when linked.
+RampTransform EffectiveOutTransform(const RampTransform& in, const RampTransform& out, bool linked, OutDirection dir);
+
+TransformState TransformAt(const Solved& s, const RampTransform& in, const RampTransform& outEffective, double t);
 
 const char* EaseName(Ease ease);
 
