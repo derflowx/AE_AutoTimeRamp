@@ -4,7 +4,7 @@ After Effects effect (native C++, AE SDK) that speed-ramps a layer into and out 
 in/out points. No Time Remap, no keyframes: everything is derived from the layer's trimmed length.
 Design: [docs/DESIGN.md](docs/DESIGN.md).
 
-Status: **v0.5**: ramps, ease presets incl. Custom bezier, linked ramp out, anchors, speed-based
+Status: **v0.5.1**: ramps, ease presets incl. Custom bezier, linked ramp out, anchors, speed-based
 motion blur, ramp-linked transform (scale/rotation/position/opacity) with mirror edges, a Speed/Time
 graph in Effect Controls, and a text-free real-time marker on the layer.
 
@@ -67,7 +67,7 @@ The effect appears under **Effect > Time > Auto Time Ramp**.
   - *Ease*: Snap, Soft snap, Hard snap, Whip, Expo snap, Circ snap, Settle, Smooth, Linear, Custom.
     *Custom* shows four bezier sliders (x1, y1, x2, y2, like CSS `cubic-bezier`); the curve is
     clamped to 0–1 so playback never runs backwards.
-  - *Same as ramp in* (ramp out): mirrors the ramp-in settings; the ramp-out controls grey out.
+  - *Same as ramp in* (ramp out, on by default): mirrors the ramp-in settings; the ramp-out controls grey out.
   - *Motion direction* (ramp out, while linked): **Continue through the cut** (default) inverts the
     ramp-in motion, so the image keeps moving the same way, as in whip-pan or zoom transitions.
     **Mirror ramp in** plays it backwards.
@@ -86,7 +86,7 @@ The effect appears under **Effect > Time > Auto Time Ramp**.
 - **Transform edges**: what fills the frame when the transform pulls the image's edges in:
   **Mirror** (default, seamless, like transition packs), **Transparent**, or **Repeat**.
 - **Motion blur**
-  - *Enable*: on by default.
+  - *Enable*: off by default.
   - *Shutter angle*: 180° = shutter open for half a frame, centred on the frame. Up to 720°.
   - *Max samples*: cap on source samples averaged per frame (1–64, default 16).
 

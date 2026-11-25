@@ -134,7 +134,7 @@ A_Err ReadSettingsAEGP(AEGP_PluginID id, AEGP_EffectRefH effectH, const A_Time& 
 {
     // Called from the idle hook / UI thread.
     A_Err err = A_Err_NONE;
-    AEFX_SuiteScoper<AEGP_StreamSuite7> streams(g_pica, kAEGPStreamSuite, kAEGPStreamSuiteVersion7);
+    AEFX_SuiteScoper<AEGP_StreamSuite6> streams(g_pica, kAEGPStreamSuite, kAEGPStreamSuiteVersion6);
     RawValues raw;
     for (int i = 0; i < ATR_NUM_PARAMS && !err; ++i)
     {

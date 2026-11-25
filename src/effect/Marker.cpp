@@ -40,7 +40,7 @@ A_Err FindOurMarker(AEGP_StreamRefH streamH, FoundMarker& found, double probeTim
     AEFX_SuiteScoper<AEGP_KeyframeSuite5> kf(g_pica, kAEGPKeyframeSuite, kAEGPKeyframeSuiteVersion5);
     AEFX_SuiteScoper<AEGP_MarkerSuite3> mk(g_pica, kAEGPMarkerSuite, kAEGPMarkerSuiteVersion3);
     AEFX_SuiteScoper<AEGP_MemorySuite1> mem(g_pica, kAEGPMemorySuite, kAEGPMemorySuiteVersion1);
-    AEFX_SuiteScoper<AEGP_StreamSuite7> streams(g_pica, kAEGPStreamSuite, kAEGPStreamSuiteVersion7);
+    AEFX_SuiteScoper<AEGP_StreamSuite6> streams(g_pica, kAEGPStreamSuite, kAEGPStreamSuiteVersion6);
 
     A_long n = 0;
     err = kf->AEGP_GetStreamNumKFs(streamH, &n);
@@ -183,7 +183,7 @@ void ProcessLayer(AEGP_LayerH layerH, AEGP_EffectRefH effH, A_long compId, doubl
         // First look at this layer (project just opened, or effect just applied): only create the
         // marker if ours is missing entirely; don't rewrite an existing one the user may have kept.
         g_seen[key] = now;
-        AEFX_SuiteScoper<AEGP_StreamSuite7> streams(g_pica, kAEGPStreamSuite, kAEGPStreamSuiteVersion7);
+        AEFX_SuiteScoper<AEGP_StreamSuite6> streams(g_pica, kAEGPStreamSuite, kAEGPStreamSuiteVersion6);
         AEGP_StreamRefH streamH = nullptr;
         if (streams->AEGP_GetNewLayerStream(g_pluginId, layerH, AEGP_LayerStream_MARKER, &streamH) != A_Err_NONE)
             return;
@@ -223,7 +223,7 @@ A_Err IdleHookImpl(A_long* max_sleepPL)
         g_lastRunMs = nowMs;
 #endif
         AEFX_SuiteScoper<AEGP_ItemSuite9> items(g_pica, kAEGPItemSuite, kAEGPItemSuiteVersion9);
-        AEFX_SuiteScoper<AEGP_CompSuite13> comps(g_pica, kAEGPCompSuite, kAEGPCompSuiteVersion13);
+        AEFX_SuiteScoper<AEGP_CompSuite12> comps(g_pica, kAEGPCompSuite, kAEGPCompSuiteVersion12);
         AEFX_SuiteScoper<AEGP_LayerSuite9> layers(g_pica, kAEGPLayerSuite, kAEGPLayerSuiteVersion9);
         AEFX_SuiteScoper<AEGP_EffectSuite5> fx(g_pica, kAEGPEffectSuite, kAEGPEffectSuiteVersion5);
 
@@ -294,7 +294,7 @@ bool SyncMarker(AEGP_LayerH layerH, const MarkerZone& zone, double frameSeconds,
     bool changed = false;
     try
     {
-        AEFX_SuiteScoper<AEGP_StreamSuite7> streams(g_pica, kAEGPStreamSuite, kAEGPStreamSuiteVersion7);
+        AEFX_SuiteScoper<AEGP_StreamSuite6> streams(g_pica, kAEGPStreamSuite, kAEGPStreamSuiteVersion6);
         AEFX_SuiteScoper<AEGP_KeyframeSuite5> kf(g_pica, kAEGPKeyframeSuite, kAEGPKeyframeSuiteVersion5);
         AEFX_SuiteScoper<AEGP_MarkerSuite3> mk(g_pica, kAEGPMarkerSuite, kAEGPMarkerSuiteVersion3);
 

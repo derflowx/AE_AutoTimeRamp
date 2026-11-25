@@ -1,4 +1,4 @@
-// Auto Time Ramp — SmartFX effect.
+// Auto Time Ramp â€” SmartFX effect.
 //
 // Re-times its own layer: for every output frame it computes a source time with atr::Evaluate
 // (from the layer's in/out points and the ramp params) and checks out the input layer at that time.
@@ -199,7 +199,7 @@ PF_Err ParamsSetup(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef*[], PF_
     AEFX_CLR_STRUCT(def);
     PF_ADD_TOPIC("Ramp out", DISK_OUT_TOPIC);
     AEFX_CLR_STRUCT(def);
-    PF_ADD_CHECKBOXX("Same as ramp in", FALSE, sup, DISK_OUT_LINK);
+    PF_ADD_CHECKBOXX("Same as ramp in", TRUE, sup, DISK_OUT_LINK);
     AEFX_CLR_STRUCT(def);
     PF_ADD_POPUP("Motion direction", ATR_DIRECTION_COUNT, 1, ATR_DIRECTION_CHOICES, DISK_OUT_DIRECTION);
     PF_ADD_FLOAT_SLIDERX("Duration (s)", 0, 60, 0, 5, 1.0, PF_Precision_HUNDREDTHS, 0, sup, DISK_OUT_DURATION);
@@ -222,7 +222,7 @@ PF_Err ParamsSetup(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef*[], PF_
     AEFX_CLR_STRUCT(def);
     PF_ADD_TOPIC("Motion blur", DISK_BLUR_TOPIC);
     AEFX_CLR_STRUCT(def);
-    PF_ADD_CHECKBOXX("Enable", TRUE, 0, DISK_BLUR_ENABLE);
+    PF_ADD_CHECKBOXX("Enable", FALSE, 0, DISK_BLUR_ENABLE);
     PF_ADD_FLOAT_SLIDERX("Shutter angle", 0, 720, 0, 360, 180, PF_Precision_INTEGER, 0, 0, DISK_BLUR_SHUTTER);
     AEFX_CLR_STRUCT(def);
     PF_ADD_SLIDER("Max samples", 1, atr::kMaxShutterSamples, 1, 32, 16, DISK_BLUR_MAX_SAMPLES);
@@ -286,7 +286,7 @@ PF_Err UpdateParamsUI(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* par
     // Visibility goes through dynamic stream flags in AE.
     ATR_STEP("update_params_ui:visibility");
     AEFX_SuiteScoper<AEGP_PFInterfaceSuite1> pfi(in_data, kAEGPPFInterfaceSuite, kAEGPPFInterfaceSuiteVersion1, out_data);
-    AEFX_SuiteScoper<AEGP_StreamSuite7> streams(in_data, kAEGPStreamSuite, kAEGPStreamSuiteVersion7, out_data);
+    AEFX_SuiteScoper<AEGP_StreamSuite6> streams(in_data, kAEGPStreamSuite, kAEGPStreamSuiteVersion6, out_data);
     AEFX_SuiteScoper<AEGP_DynamicStreamSuite4> dyn(
         in_data, kAEGPDynamicStreamSuite, kAEGPDynamicStreamSuiteVersion4, out_data);
     AEGP_EffectRefH effH = nullptr;

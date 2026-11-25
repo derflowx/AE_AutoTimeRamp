@@ -71,6 +71,9 @@
             legacy.duration = 2;
             L.property("ADBE Marker").setValueAtTime(L.startTime + 13, legacy);
             L.Effects.addProperty("DFLW AutoTimeRamp");
+            check("default_link_on", P(L, 25).value === 1, "link=" + P(L, 25).value);
+            check("default_blur_off", P(L, 13).value === 0, "blur=" + P(L, 13).value);
+            P(L, 25).setValue(0); // unlinked from here on: the checks below set in/out separately
             app.endUndoGroup();
             main.openInViewer(); // the idle hook watches the active comp
             check("setup", true, "comp created");
