@@ -78,7 +78,8 @@ bool IsValueParam(int i)
     case ATR_IN_XF_TOPIC:
     case ATR_IN_XF_TOPIC_END:
     case ATR_OUT_XF_TOPIC:
-    case ATR_OUT_XF_TOPIC_END: return false;
+    case ATR_OUT_XF_TOPIC_END:
+    case ATR_PIVOT: return false; // 2D; read separately where the render needs it
     default: return true;
     }
 }
@@ -118,6 +119,19 @@ PF_Err ReadSettingsPF(PF_InData* in_data, Settings& s)
     }
     if (!err)
         FromRaw(raw, s);
+    if (!err)
+    {
+        // Point params arrive in layer coordinates already scaled for the current downsample.
+        PF_ParamDef p;
+        AEFX_CLR_STRUCT(p);
+        ERR(PF_CHECKOUT_PARAM(in_data, ATR_PIVOT, in_data->current_time, in_data->time_step, in_data->time_scale, &p));
+        if (!err && p.param_type == PF_Param_POINT)
+        {
+            s.hasPivot = true;
+            s.pivotX = FIX_2_FLOAT(p.u.td.x_value);
+            s.pivotY = FIX_2_FLOAT(p.u.td.y_value);
+        }
+    }
     return err;
 }
 

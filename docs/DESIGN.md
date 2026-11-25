@@ -84,9 +84,13 @@ Scale/rotation/position/opacity at each cut with weight `w = 1 - e(u)` (the ramp
 `(speed - 1)/(peak - 1)`), scale in log space. A linked ramp out either continues through the cut
 (inverse scale, negated rotation/position, same opacity dip) or mirrors ramp in. The transform is
 evaluated per shutter sample at its timeline time, so the transform motion is blurred too. Rendering
-requests the whole layer, maps each output pixel through the sample's inverse affine (pivot = layer
-centre, square-pixel space via the pixel aspect ratio), samples bilinearly with Mirror/Transparent/
+requests the whole layer, maps each output pixel through the sample's inverse affine (pivot = the
+"Transform pivot" point param, default layer centre, v0.6; square-pixel space via the pixel aspect ratio), samples bilinearly with Mirror/Transparent/
 Repeat edges, multiplies by opacity and averages.
+
+Since v0.6 the per-pixel accumulation (blur average and transform) runs in 16-row bands through
+`PF_Iterate8Suite2::iterate_generic`, so AE spreads one frame across its render threads. Each band
+writes only its own rows. If the suite is unavailable it falls back to one thread.
 
 Lesson: the effect must declare `PF_OutFlag_NON_PARAM_VARY`. Its output depends on the current time,
 not only on params and input, and without the flag AE rendered a static input (still, solid, static

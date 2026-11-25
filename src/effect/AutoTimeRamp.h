@@ -24,8 +24,8 @@
 #define ATR_DESCRIPTION "Keyframe-free speed ramps at the layer in/out points."
 
 #define MAJOR_VERSION 0
-#define MINOR_VERSION 5
-#define BUG_VERSION 1
+#define MINOR_VERSION 6
+#define BUG_VERSION 0
 #define STAGE_VERSION PF_Stage_DEVELOP
 #define BUILD_VERSION 1
 
@@ -84,6 +84,7 @@ enum
     ATR_OUT_TOPIC_END,
     ATR_ANCHOR,
     ATR_EDGES,
+    ATR_PIVOT,
     ATR_BLUR_TOPIC,
     ATR_BLUR_ENABLE,
     ATR_BLUR_SHUTTER,
@@ -141,6 +142,7 @@ enum
     DISK_OUT_DIRECTION = 42,
     DISK_EDGES = 43,
     DISK_GRAPH_MODE = 44,
+    DISK_PIVOT = 45,
 };
 
 // Popup strings: order must match atr::Ease / atr::Anchor (popup values are 1-based).

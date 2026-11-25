@@ -173,14 +173,16 @@
             XA[s1].expression = 'thisComp.layer("xf").sampleImage(' + at + ',[0.5,0.5],true,time)[3]';
         }
         // xin/xout: [scale, rotation, posX, posY, opacity]; link 0/1; dir 1=continue 2=mirror; edges 1..3
-        function runXf(name, xin, xout, link, dir, edges) {
+        // pivot: [x, y] in layer px (omit for the default, layer centre)
+        function runXf(name, xin, xout, link, dir, edges, pivot) {
             XL.startTime = -10; XL.inPoint = 0; XL.outPoint = 4;
             XP(D.inDur).setValue(1); XP(D.inSrc).setValue(5); XP(D.inEase).setValue(1);
             XP(D.outDur).setValue(1); XP(D.outSrc).setValue(5); XP(D.outEase).setValue(4);
             XP(D.blurOn).setValue(0); XP(D.link).setValue(link); XP(42).setValue(dir); XP(43).setValue(edges);
             for (var k = 0; k < 5; k++) { XP(29 + k).setValue(xin[k]); XP(36 + k).setValue(xout[k]); }
+            XP(45).setValue(pivot ? pivot : [XW / 2, XH / 2]);
             log("#xfcase," + name + ",10,14,1,5,1,1,5,4," + link + "," + dir + "," + edges + "," + XW + "," + XH + "," +
-                xin.join(",") + "," + xout.join(","));
+                xin.join(",") + "," + xout.join(",") + (pivot ? "," + pivot.join(",") : ""));
             for (var f = 0; f < 4 * FPS; f += 2) {
                 var c = f / FPS;
                 for (var q = 0; q < PTS.length; q++) {
@@ -192,6 +194,7 @@
         runXf("xf_scale_rot_mirror", [150, 30, 40, -20, 100], [100, 0, 0, 0, 100], 1, 1, 1);
         runXf("xf_shrink_transparent", [60, -20, 0, 0, 40], [100, 0, 0, 0, 100], 1, 2, 2);
         runXf("xf_unlinked_repeat", [100, 0, 60, 0, 100], [70, 45, 0, 25, 70], 0, 1, 3);
+        runXf("xf_pivot_corner", [200, 25, 0, 0, 100], [100, 0, 0, 0, 100], 1, 1, 2, [30, 20]);
         // OCIO-managed projects only allow 32 bpc; switch to Adobe colour management for the 8/16 bpc runs.
         // colorManagementSystem is numeric (0 = Adobe, 1 = OCIO); the enum object isn't exposed in AE 26.
         var ADOBE_CMS = (typeof ColorManagementSystem !== "undefined") ? ColorManagementSystem.ADOBE : 0;

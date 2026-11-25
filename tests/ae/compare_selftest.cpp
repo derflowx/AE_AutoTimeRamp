@@ -34,6 +34,7 @@ struct XfCase
     atr::RampTransform in, outEff;
     int edges = 1; // 1 mirror, 2 transparent, 3 repeat
     double W = 200, H = 100;
+    double pivX = -1, pivY = -1; // < 0: layer centre
     int points = 0, alphaOk = 0, valueOkU = 0, valueOkP = 0, valueChecked = 0;
     double maxAlphaErr = 0;
 };
@@ -45,7 +46,7 @@ void ExpectXf(const XfCase& c, double t, double px, double py, double& value, do
     const double th = st.rotation * 3.14159265358979323846 / 180.0;
     const double s = std::max(1e-4, st.scale);
     const double a = std::cos(th) / s, b = std::sin(th) / s, cc = -std::sin(th) / s, d = std::cos(th) / s;
-    const double pvx = c.W / 2, pvy = c.H / 2;
+    const double pvx = c.pivX >= 0 ? c.pivX : c.W / 2, pvy = c.pivY >= 0 ? c.pivY : c.H / 2;
     const double ux = px - pvx - st.dx, uy = py - pvy - st.dy;
     double qx = pvx + a * ux + b * uy;
     double qy = pvy + cc * ux + d * uy;
@@ -148,6 +149,11 @@ int main(int argc, char** argv)
             {
                 *vi[k] = std::atof(f[15 + k].c_str());
                 *vo[k] = std::atof(f[20 + k].c_str());
+            }
+            if (f.size() >= 27) // optional pivot (layer px)
+            {
+                c.pivX = std::atof(f[25].c_str());
+                c.pivY = std::atof(f[26].c_str());
             }
             c.in = xin;
             c.outEff = atr::EffectiveOutTransform(xin, xout, ri.linkOut, dir);

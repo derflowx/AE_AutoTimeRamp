@@ -18,6 +18,9 @@ struct Settings
     atr::RampTransform xfOut;         // as entered; use XfOutEffective() for rendering
     atr::OutDirection direction = atr::OutDirection::Continue;
     int edges = ATR_EDGE_MIRROR;
+    // Transform pivot in layer pixels at the current downsample (only read by ReadSettingsPF).
+    bool hasPivot = false;
+    double pivotX = 0.0, pivotY = 0.0;
 
     atr::RampTransform XfOutEffective() const
     {

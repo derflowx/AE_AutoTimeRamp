@@ -218,6 +218,9 @@ PF_Err ParamsSetup(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef*[], PF_
     PF_ADD_POPUP("Anchor", ATR_ANCHOR_COUNT, 1, ATR_ANCHOR_CHOICES, DISK_ANCHOR);
     AEFX_CLR_STRUCT(def);
     PF_ADD_POPUP("Transform edges", ATR_EDGES_COUNT, ATR_EDGE_MIRROR, ATR_EDGES_CHOICES, DISK_EDGES);
+    // Centre of the cut transform's scale and rotation (layer space; default = layer centre).
+    AEFX_CLR_STRUCT(def);
+    PF_ADD_POINT("Transform pivot", 50, 50, FALSE, DISK_PIVOT);
 
     AEFX_CLR_STRUCT(def);
     PF_ADD_TOPIC("Motion blur", DISK_BLUR_TOPIC);
@@ -415,9 +418,10 @@ PF_Err PreRender(PF_InData* in_data, PF_OutData* out_data, PF_PreRenderExtra* ex
                          : 1.0;
         if (par <= 0.0)
             par = 1.0;
+        const double pivX = settings.hasPivot ? settings.pivotX : 0.5 * layerRect.right;
+        const double pivY = settings.hasPivot ? settings.pivotY : 0.5 * layerRect.bottom;
         for (int i = 0; i < n; ++i)
-            plan->xf[i] = MakeXform(states[i], 0.5 * layerRect.right, 0.5 * layerRect.bottom,
-                                    states[i].dx * dsx, states[i].dy * dsy, par);
+            plan->xf[i] = MakeXform(states[i], pivX, pivY, states[i].dx * dsx, states[i].dy * dsy, par);
     }
     bool first = true;
     for (int i = 0; i < n && !err; ++i)
@@ -497,14 +501,14 @@ template <> struct Traits<PF_PixelFloat>
 // Box-filter average of the shutter samples. AE buffers are premultiplied, so a plain average of
 // all four channels is correct. Each sample buffer may cover a different rect in layer space.
 template <typename PixelT>
-void Accumulate(const RenderPlan& plan, PF_EffectWorld* const* inputs, PF_EffectWorld* out)
+void Accumulate(const RenderPlan& plan, PF_EffectWorld* const* inputs, PF_EffectWorld* out, A_long yBegin, A_long yEnd)
 {
     using ChanT = decltype(PixelT::red);
-    const A_long w = out->width, h = out->height;
+    const A_long w = out->width;
     const float inv = 1.0f / float(plan.samples);
     std::vector<float> acc(static_cast<size_t>(w) * 4);
 
-    for (A_long y = 0; y < h; ++y)
+    for (A_long y = yBegin; y < yEnd; ++y)
     {
         std::fill(acc.begin(), acc.end(), 0.0f);
         for (int i = 0; i < plan.samples; ++i)
@@ -566,10 +570,11 @@ inline bool WrapEdge(A_long& v, A_long size, int mode)
 // Transformed shutter samples: each output pixel is mapped back through the sample's inverse
 // transform, sampled bilinearly with the edge mode, scaled by the sample's opacity, and averaged.
 template <typename PixelT>
-void AccumulateTransformed(const RenderPlan& plan, PF_EffectWorld* const* inputs, PF_EffectWorld* out)
+void AccumulateTransformed(const RenderPlan& plan, PF_EffectWorld* const* inputs, PF_EffectWorld* out, A_long yBegin,
+                           A_long yEnd)
 {
     using ChanT = decltype(PixelT::red);
-    const A_long w = out->width, h = out->height;
+    const A_long w = out->width;
     const float inv = 1.0f / float(plan.samples);
 
     auto fetch = [&](const PF_EffectWorld* in, const PF_LRect& r, A_long x, A_long y, float* px) {
@@ -587,7 +592,7 @@ void AccumulateTransformed(const RenderPlan& plan, PF_EffectWorld* const* inputs
         return true;
     };
 
-    for (A_long y = 0; y < h; ++y)
+    for (A_long y = yBegin; y < yEnd; ++y)
     {
         PixelT* orow = reinterpret_cast<PixelT*>(reinterpret_cast<char*>(out->data) + y * out->rowbytes);
         const double py = plan.outRect.top + y + 0.5;
@@ -631,6 +636,55 @@ void AccumulateTransformed(const RenderPlan& plan, PF_EffectWorld* const* inputs
     }
 }
 
+// Splits the output rows into bands and runs them on AE's render threads (iterate_generic).
+// Every band writes only its own rows, so no locking is needed. Falls back to one thread.
+struct RowJob
+{
+    const RenderPlan* plan;
+    PF_EffectWorld* const* inputs;
+    PF_EffectWorld* out;
+    void (*fn)(const RenderPlan&, PF_EffectWorld* const*, PF_EffectWorld*, A_long, A_long);
+    A_long rowsPerBand;
+};
+
+PF_Err RunBand(void* refcon, A_long /*thread*/, A_long i, A_long /*iterations*/)
+{
+    const RowJob& job = *static_cast<const RowJob*>(refcon);
+    const A_long y0 = i * job.rowsPerBand;
+    const A_long y1 = std::min(job.out->height, y0 + job.rowsPerBand);
+    if (y0 < y1)
+        job.fn(*job.plan, job.inputs, job.out, y0, y1);
+    return PF_Err_NONE;
+}
+
+template <typename PixelT>
+PF_Err RunRows(PF_InData* in_data, PF_OutData* out_data, const RenderPlan& plan, PF_EffectWorld* const* inputs,
+               PF_EffectWorld* out, bool transformed)
+{
+    RowJob job;
+    job.plan = &plan;
+    job.inputs = inputs;
+    job.out = out;
+    job.fn = transformed ? &AccumulateTransformed<PixelT> : &Accumulate<PixelT>;
+    job.rowsPerBand = 16; // small bands balance uneven rows (edge wrap, empty areas) at low overhead
+    const A_long bands = (out->height + job.rowsPerBand - 1) / job.rowsPerBand;
+    if (bands <= 1)
+    {
+        job.fn(plan, inputs, out, 0, out->height);
+        return PF_Err_NONE;
+    }
+    try
+    {
+        AEFX_SuiteScoper<PF_Iterate8Suite2> iter(in_data, kPFIterate8Suite, kPFIterate8SuiteVersion2, out_data);
+        return iter->iterate_generic(bands, &job, RunBand);
+    }
+    catch (...)
+    {
+        job.fn(plan, inputs, out, 0, out->height); // suite unavailable: single thread
+        return PF_Err_NONE;
+    }
+}
+
 PF_Err SmartRender(PF_InData* in_data, PF_OutData* out_data, PF_SmartRenderExtra* extra)
 {
     PF_Err err = PF_Err_NONE, err2 = PF_Err_NONE;
@@ -658,9 +712,9 @@ PF_Err SmartRender(PF_InData* in_data, PF_OutData* out_data, PF_SmartRenderExtra
         {
             switch (format)
             {
-            case PF_PixelFormat_ARGB128: AccumulateTransformed<PF_PixelFloat>(*plan, inputs, outputP); break;
-            case PF_PixelFormat_ARGB64: AccumulateTransformed<PF_Pixel16>(*plan, inputs, outputP); break;
-            case PF_PixelFormat_ARGB32: AccumulateTransformed<PF_Pixel8>(*plan, inputs, outputP); break;
+            case PF_PixelFormat_ARGB128: err = RunRows<PF_PixelFloat>(in_data, out_data, *plan, inputs, outputP, true); break;
+            case PF_PixelFormat_ARGB64: err = RunRows<PF_Pixel16>(in_data, out_data, *plan, inputs, outputP, true); break;
+            case PF_PixelFormat_ARGB32: err = RunRows<PF_Pixel8>(in_data, out_data, *plan, inputs, outputP, true); break;
             default: err = PF_Err_BAD_CALLBACK_PARAM; break;
             }
         }
@@ -689,9 +743,9 @@ PF_Err SmartRender(PF_InData* in_data, PF_OutData* out_data, PF_SmartRenderExtra
             {
                 switch (format)
                 {
-                case PF_PixelFormat_ARGB128: Accumulate<PF_PixelFloat>(*plan, inputs, outputP); break;
-                case PF_PixelFormat_ARGB64: Accumulate<PF_Pixel16>(*plan, inputs, outputP); break;
-                case PF_PixelFormat_ARGB32: Accumulate<PF_Pixel8>(*plan, inputs, outputP); break;
+                case PF_PixelFormat_ARGB128: err = RunRows<PF_PixelFloat>(in_data, out_data, *plan, inputs, outputP, false); break;
+                case PF_PixelFormat_ARGB64: err = RunRows<PF_Pixel16>(in_data, out_data, *plan, inputs, outputP, false); break;
+                case PF_PixelFormat_ARGB32: err = RunRows<PF_Pixel8>(in_data, out_data, *plan, inputs, outputP, false); break;
                 default: err = PF_Err_BAD_CALLBACK_PARAM; break;
                 }
             }

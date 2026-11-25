@@ -4,8 +4,8 @@ After Effects effect (native C++, AE SDK) that speed-ramps a layer into and out 
 in/out points. No Time Remap, no keyframes: everything is derived from the layer's trimmed length.
 Design: [docs/DESIGN.md](docs/DESIGN.md).
 
-Status: **v0.5.1**: ramps, ease presets incl. Custom bezier, linked ramp out, anchors, speed-based
-motion blur, ramp-linked transform (scale/rotation/position/opacity) with mirror edges, a Speed/Time
+Status: **v0.6**: ramps, ease presets incl. Custom bezier, linked ramp out, anchors, speed-based
+motion blur, ramp-linked transform (scale/rotation/position/opacity) with a movable pivot and mirror edges, a Speed/Time
 graph in Effect Controls, and a text-free real-time marker on the layer.
 
 ## Layout
@@ -85,6 +85,9 @@ The effect appears under **Effect > Time > Auto Time Ramp**.
 
 - **Transform edges**: what fills the frame when the transform pulls the image's edges in:
   **Mirror** (default, seamless, like transition packs), **Transparent**, or **Repeat**.
+- **Transform pivot**: the point the cut transform scales and rotates around, in layer space
+  (default: layer centre). Drag the crosshair in the comp viewer to zoom into a subject. Shared by
+  both ramps.
 - **Motion blur**
   - *Enable*: off by default.
   - *Shutter angle*: 180° = shutter open for half a frame, centred on the frame. Up to 720°.
